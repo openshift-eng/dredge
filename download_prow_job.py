@@ -277,21 +277,20 @@ def discover_must_gather(gcs_path, gcsweb_base):
 
     logger.info(f"Found {len(subdirs)} subdirectories in artifacts")
 
-    # Check each subdirectory for must-gather
+    # Check each subdirectory for must-gather by listing the gather-must-gather/artifacts/ dir
     for subdir in subdirs:
         # Clean up subdir name (may be relative or absolute path)
         subdir_name = subdir.rstrip("/").split("/")[-1]
         if not subdir_name or subdir_name == "..":
             continue
 
-        must_gather_path = f"{subdir_name}/gather-must-gather/artifacts/must-gather.tar"
-        full_path = f"{gcs_path}/artifacts/{must_gather_path}"
-
-        # Quick HEAD check to see if file exists via gcsweb
-        check_url = f"{gcsweb_base}{full_path}"
+        # Check if gather-must-gather/artifacts/ directory exists and contains must-gather.tar
+        gather_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{subdir_name}/gather-must-gather/artifacts/"
         try:
-            head_resp = requests.head(check_url, timeout=10)
-            if head_resp.status_code == 200:
+            resp = requests.get(gather_artifacts_url, timeout=10)
+            if resp.status_code == 200 and "must-gather.tar" in resp.text:
+                must_gather_path = f"{subdir_name}/gather-must-gather/artifacts/must-gather.tar"
+                full_path = f"{gcs_path}/artifacts/{must_gather_path}"
                 logger.info(f"Found must-gather at: {must_gather_path}")
                 return full_path
         except requests.RequestException:
