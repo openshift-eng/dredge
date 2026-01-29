@@ -21,6 +21,9 @@ try:
 except ImportError:
     sys.exit("Error: 'requests' library required. Install with: pip install requests")
 
+# Cache for discovered gcsweb base URL
+_gcsweb_base_cache = {}
+
 
 def parse_args():
     """Parse command-line arguments."""
@@ -166,6 +169,42 @@ def spyglass_to_gcs_path(spyglass_link):
     return spyglass_link
 
 
+def discover_gcsweb_base(prow_base_url, spyglass_link):
+    """
+    Discover the gcsweb base URL by fetching the Spyglass page and extracting
+    artifact links. Caches the result per prow instance.
+
+    Returns the gcsweb base URL (e.g., "https://gcsweb.example.com/gcs/") or None.
+    """
+    # Check cache first
+    if prow_base_url in _gcsweb_base_cache:
+        return _gcsweb_base_cache[prow_base_url]
+
+    spyglass_url = f"{prow_base_url}{spyglass_link}"
+    try:
+        logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
+        response = requests.get(spyglass_url, timeout=30)
+        response.raise_for_status()
+        html = response.text
+    except requests.RequestException as e:
+        logger.warning(f"Failed to fetch Spyglass page for gcsweb discovery: {e}")
+        return None
+
+    # Look for gcsweb links in the page
+    # Pattern matches URLs like: https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/bucket/path
+    gcsweb_pattern = r'(https?://[^"\s]+/gcs/)[^"\s]+'
+    match = re.search(gcsweb_pattern, html)
+
+    if match:
+        gcsweb_base = match.group(1)
+        logger.info(f"Discovered gcsweb base URL: {gcsweb_base}")
+        _gcsweb_base_cache[prow_base_url] = gcsweb_base
+        return gcsweb_base
+
+    logger.warning("Could not discover gcsweb URL from Spyglass page")
+    return None
+
+
 def parse_spyglass_url(url):
     """
     Parse a Spyglass URL into build ID and SpyglassLink path.
@@ -207,12 +246,11 @@ def download_artifact(url, dest, retries=3, backoff=2):
     return False
 
 
-def discover_must_gather(gcs_path):
+def discover_must_gather(gcs_path, gcsweb_base):
     """
     List artifacts directory to find must-gather location.
     Returns the full path to must-gather.tar if found, None otherwise.
     """
-    gcsweb_base = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/"
     artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/"
 
     try:
@@ -249,8 +287,8 @@ def discover_must_gather(gcs_path):
         must_gather_path = f"{subdir_name}/gather-must-gather/artifacts/must-gather.tar"
         full_path = f"{gcs_path}/artifacts/{must_gather_path}"
 
-        # Quick HEAD check to see if file exists
-        check_url = f"https://storage.googleapis.com/{full_path}"
+        # Quick HEAD check to see if file exists via gcsweb
+        check_url = f"{gcsweb_base}{full_path}"
         try:
             head_resp = requests.head(check_url, timeout=10)
             if head_resp.status_code == 200:
@@ -287,7 +325,7 @@ def extract_tgz(tar_path, dest_dir):
         return False
 
 
-def write_build_metadata(build, build_dir):
+def write_build_metadata(build, build_dir, prow_base_url):
     """Write metadata JSON file for a build."""
     refs = build.get("Refs", {})
     pulls = refs.get("pulls", [])
@@ -296,7 +334,7 @@ def write_build_metadata(build, build_dir):
     metadata = {
         "build_id": build.get("ID"),
         "execution_date": build.get("Started"),
-        "prow_job_link": f"https://prow.ci.openshift.org{spyglass_link}" if spyglass_link else None,
+        "prow_job_link": f"{prow_base_url}{spyglass_link}" if spyglass_link else None,
         "pr_link": pulls[0].get("link") if pulls else None,
         "commit_link": pulls[0].get("commit_link") if pulls else None,
     }
@@ -307,7 +345,7 @@ def write_build_metadata(build, build_dir):
     logger.info(f"Wrote metadata to: {metadata_path}")
 
 
-def process_build(build, output_dir):
+def process_build(build, output_dir, prow_base_url):
     """Download artifacts for one build."""
     build_id = build.get("ID", "unknown")
     build_dir = output_dir / str(build_id)
@@ -323,12 +361,19 @@ def process_build(build, output_dir):
     gcs_path = spyglass_to_gcs_path(spyglass_link)
     build_dir.mkdir(parents=True, exist_ok=True)
 
+    # Discover gcsweb base URL from Spyglass page
+    gcsweb_base = discover_gcsweb_base(prow_base_url, spyglass_link)
+    if not gcsweb_base:
+        logger.warning(f"Build {build_id}: Could not discover gcsweb URL, skipping artifact downloads")
+        write_build_metadata(build, build_dir, prow_base_url)
+        return
+
     # Download junit_operator.xml if not already present
     junit_dest = build_dir / "junit_operator.xml"
     if junit_dest.exists():
         logger.info(f"Build {build_id}: junit_operator.xml already exists, skipping")
     else:
-        junit_url = f"https://storage.googleapis.com/{gcs_path}/artifacts/junit_operator.xml"
+        junit_url = f"{gcsweb_base}{gcs_path}/artifacts/junit_operator.xml"
         if not download_artifact(junit_url, junit_dest):
             logger.warning(f"Build {build_id}: junit_operator.xml not available")
 
@@ -337,15 +382,15 @@ def process_build(build, output_dir):
     if extract_dir.exists():
         logger.info(f"Build {build_id}: must-gather already exists, skipping")
     else:
-        must_gather_gcs_path = discover_must_gather(gcs_path)
+        must_gather_gcs_path = discover_must_gather(gcs_path, gcsweb_base)
         if must_gather_gcs_path:
-            must_gather_url = f"https://storage.googleapis.com/{must_gather_gcs_path}"
+            must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
             tar_dest = build_dir / "must-gather.tar"
             if download_artifact(must_gather_url, tar_dest):
                 extract_tgz(tar_dest, extract_dir)
 
     # Always write build metadata
-    write_build_metadata(build, build_dir)
+    write_build_metadata(build, build_dir, prow_base_url)
 
     logger.info(f"Completed processing build {build_id}")
 
@@ -397,6 +442,9 @@ def cmd_history(args, output_dir):
         logger.error("Count must be at least 1")
         sys.exit(1)
 
+    # Extract prow base URL for gcsweb discovery
+    prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
+
     filter_desc = []
     if args.failure:
         filter_desc.append("failures")
@@ -419,7 +467,7 @@ def cmd_history(args, output_dir):
     # Process each build
     for i, build in enumerate(builds, 1):
         logger.info(f"--- Processing build {i}/{len(builds)} ---")
-        process_build(build, output_dir)
+        process_build(build, output_dir, prow_base_url)
 
     logger.info("Done")
 
@@ -436,6 +484,9 @@ def cmd_urls(args, output_dir):
             logger.error(f"Invalid URL: {url}")
             continue
 
+        # Extract prow base URL for gcsweb discovery
+        prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
+
         build_id, spyglass_path = parse_spyglass_url(url)
         logger.info(f"--- Processing build {i}/{len(args.urls)} (ID: {build_id}) ---")
 
@@ -445,7 +496,7 @@ def cmd_urls(args, output_dir):
             "SpyglassLink": spyglass_path,
         }
 
-        process_build(build, output_dir)
+        process_build(build, output_dir, prow_base_url)
 
     logger.info("Done")
 
