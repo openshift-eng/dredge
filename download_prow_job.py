@@ -47,6 +47,11 @@ Each subdirectory is named by build ID and may contain:
 
 - `must-gather/` - Extracted must-gather diagnostic data (if available)
 
+- `hypershift-dumps/` - Extracted HyperShift hosted cluster dumps (if available)
+  - `TestCreateCluster/` - Dump for each test case
+  - `TestNodePool_HostedCluster0/`
+  - Contains pod logs, events, and resource YAMLs from the hosted control plane
+
 ## Analyzing Test Failures
 
 1. Check `build_info.json` for the job link and PR context
@@ -287,58 +292,112 @@ def download_artifact(url, dest, retries=3, backoff=2):
     return False
 
 
-def discover_must_gather(gcs_path, gcsweb_base):
+def fetch_step_graph(gcs_path, gcsweb_base):
+    """Download and parse ci-operator-step-graph.json.
+    Returns parsed list of step dicts, or None if not available.
     """
-    List artifacts directory to find must-gather location.
-    Returns the full path to must-gather.tar if found, None otherwise.
-    """
-    artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/"
-
+    url = f"{gcsweb_base}{gcs_path}/artifacts/ci-operator-step-graph.json"
     try:
-        logger.info(f"Listing artifacts directory: {artifacts_url}")
-        response = requests.get(artifacts_url, timeout=30)
+        logger.info(f"Fetching step graph: {url}")
+        response = requests.get(url, timeout=30)
         if response.status_code == 404:
-            logger.info("Artifacts directory not found")
+            logger.error("Step graph not found (404)")
             return None
         response.raise_for_status()
-        html = response.text
+        return json.loads(response.text)
     except requests.RequestException as e:
-        logger.warning(f"Failed to list artifacts directory: {e}")
+        logger.error(f"Failed to fetch step graph: {e}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse step graph JSON: {e}")
         return None
 
-    # Parse directory listing for subdirectories (test step names)
-    # gcsweb lists directories with trailing /
-    subdir_pattern = r'<a\s+href="([^"]+)/"[^>]*>[^<]+/</a>'
-    subdirs = re.findall(subdir_pattern, html)
 
-    # Also try simpler pattern
-    if not subdirs:
-        subdir_pattern = r'href="([^"]+)/"'
-        subdirs = re.findall(subdir_pattern, html)
+def list_gcsweb_dir(url):
+    """List entries from a gcsweb directory listing.
+    Returns (subdirs, files) tuple of name lists, or ([], []) on error/404.
+    """
+    try:
+        response = requests.get(url, timeout=30)
+        if response.status_code == 404:
+            return [], []
+        response.raise_for_status()
+        html = response.text
+    except requests.RequestException:
+        return [], []
 
-    logger.info(f"Found {len(subdirs)} subdirectories in artifacts")
+    # Parse all href entries
+    all_hrefs = re.findall(r'href="([^"]+)"', html)
 
-    # Check each subdirectory for must-gather by listing the gather-must-gather/artifacts/ dir
-    for subdir in subdirs:
-        # Clean up subdir name (may be relative or absolute path)
-        subdir_name = subdir.rstrip("/").split("/")[-1]
-        if not subdir_name or subdir_name == "..":
+    subdirs = []
+    files = []
+    for href in all_hrefs:
+        name = href.rstrip("/").split("/")[-1]
+        if not name or name == "..":
             continue
+        if href.endswith("/"):
+            subdirs.append(name)
+        else:
+            files.append(name)
 
-        # Check if gather-must-gather/artifacts/ directory exists and contains must-gather.tar
-        gather_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{subdir_name}/gather-must-gather/artifacts/"
-        try:
-            resp = requests.get(gather_artifacts_url, timeout=10)
-            if resp.status_code == 200 and "must-gather.tar" in resp.text:
-                must_gather_path = f"{subdir_name}/gather-must-gather/artifacts/must-gather.tar"
-                full_path = f"{gcs_path}/artifacts/{must_gather_path}"
-                logger.info(f"Found must-gather at: {must_gather_path}")
-                return full_path
-        except requests.RequestException:
-            continue
+    return subdirs, files
 
-    logger.info("No must-gather found in any subdirectory")
+
+def discover_must_gather(gcs_path, gcsweb_base, step_graph):
+    """
+    Find must-gather.tar using step graph to identify test steps.
+    Returns the full GCS path to must-gather.tar if found, None otherwise.
+    """
+    # Extract multi-stage test step names (names not starting with '[')
+    test_steps = [s["name"] for s in step_graph if not s.get("name", "").startswith("[")]
+
+    for step_name in test_steps:
+        gather_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{step_name}/gather-must-gather/artifacts/"
+        _, files = list_gcsweb_dir(gather_artifacts_url)
+        if "must-gather.tar" in files:
+            full_path = f"{gcs_path}/artifacts/{step_name}/gather-must-gather/artifacts/must-gather.tar"
+            logger.info(f"Found must-gather at: {step_name}/gather-must-gather/artifacts/must-gather.tar")
+            return full_path
+
+    logger.info("No must-gather found in any test step")
     return None
+
+
+def discover_hypershift_dumps(gcs_path, gcsweb_base, step_graph):
+    """
+    Find hostedcluster.tar files from steps running the HyperShift test binary.
+    Uses step graph to identify relevant steps via [input:hypershift-tests] dependency.
+    Returns list of (test_dir_name, gcs_tar_path) tuples, or empty list.
+    """
+    # Find steps with hypershift-tests dependency
+    hypershift_steps = [
+        s["name"] for s in step_graph
+        if "[input:hypershift-tests]" in (s.get("dependencies") or [])
+    ]
+
+    if not hypershift_steps:
+        return []
+
+    logger.info(f"Found HyperShift test steps: {hypershift_steps}")
+    results = []
+
+    for step_name in hypershift_steps:
+        # List the step's subdirectory to find the inner step subdir
+        step_url = f"{gcsweb_base}{gcs_path}/artifacts/{step_name}/"
+        inner_subdirs, _ = list_gcsweb_dir(step_url)
+
+        for inner_subdir in inner_subdirs:
+            # List the inner step's artifacts directory for Test*/ entries
+            inner_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{step_name}/{inner_subdir}/artifacts/"
+            test_subdirs, _ = list_gcsweb_dir(inner_artifacts_url)
+
+            for test_dir in test_subdirs:
+                if test_dir.startswith("Test"):
+                    tar_path = f"{gcs_path}/artifacts/{step_name}/{inner_subdir}/artifacts/{test_dir}/hostedcluster.tar"
+                    results.append((test_dir, tar_path))
+                    logger.info(f"Found hostedcluster dump: {step_name}/{inner_subdir}/artifacts/{test_dir}/hostedcluster.tar")
+
+    return results
 
 
 def extract_tgz(tar_path, dest_dir):
@@ -440,7 +499,7 @@ def process_build(build, output_dir, prow_base_url):
         write_build_metadata(build, build_dir, prow_base_url)
         return
 
-    # Download junit_operator.xml if not already present
+    # Download junit_operator.xml if not already present (fixed path, no step graph needed)
     junit_dest = build_dir / "junit_operator.xml"
     if junit_dest.exists():
         logger.info(f"Build {build_id}: junit_operator.xml already exists, skipping")
@@ -449,17 +508,37 @@ def process_build(build, output_dir, prow_base_url):
         if not download_artifact(junit_url, junit_dest):
             logger.warning(f"Build {build_id}: junit_operator.xml not available")
 
-    # Discover and download must-gather if not already present
-    extract_dir = build_dir / "must-gather"
-    if extract_dir.exists():
-        logger.info(f"Build {build_id}: must-gather already exists, skipping")
+    # Fetch step graph for artifact discovery
+    step_graph = fetch_step_graph(gcs_path, gcsweb_base)
+
+    if step_graph is None:
+        logger.error(f"Build {build_id}: cannot discover artifacts without step graph, skipping")
     else:
-        must_gather_gcs_path = discover_must_gather(gcs_path, gcsweb_base)
-        if must_gather_gcs_path:
-            must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
-            tar_dest = build_dir / "must-gather.tar"
-            if download_artifact(must_gather_url, tar_dest):
-                extract_tgz(tar_dest, extract_dir)
+        # Discover and download must-gather if not already present
+        extract_dir = build_dir / "must-gather"
+        if extract_dir.exists():
+            logger.info(f"Build {build_id}: must-gather already exists, skipping")
+        else:
+            must_gather_gcs_path = discover_must_gather(gcs_path, gcsweb_base, step_graph)
+            if must_gather_gcs_path:
+                must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
+                tar_dest = build_dir / "must-gather.tar"
+                if download_artifact(must_gather_url, tar_dest):
+                    extract_tgz(tar_dest, extract_dir)
+
+        # Discover and download hostedcluster dumps if not already present
+        hypershift_dir = build_dir / "hypershift-dumps"
+        if hypershift_dir.exists():
+            logger.info(f"Build {build_id}: hypershift-dumps already exists, skipping")
+        else:
+            dumps = discover_hypershift_dumps(gcs_path, gcsweb_base, step_graph)
+            if dumps:
+                for test_name, tar_gcs_path in dumps:
+                    tar_url = f"{gcsweb_base}{tar_gcs_path}"
+                    tar_dest = build_dir / "hostedcluster.tar"
+                    extract_dest = hypershift_dir / test_name
+                    if download_artifact(tar_url, tar_dest):
+                        extract_tgz(tar_dest, extract_dest)
 
     # Always write build metadata
     write_build_metadata(build, build_dir, prow_base_url)
