@@ -458,7 +458,7 @@ def write_agents_md(output_dir):
 
 def write_build_metadata(build, build_dir, prow_base_url):
     """Write metadata JSON file for a build."""
-    refs = build.get("Refs", {})
+    refs = build.get("Refs") or {}
     pulls = refs.get("pulls", [])
     spyglass_link = build.get("SpyglassLink", "")
 
