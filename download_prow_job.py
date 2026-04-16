@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import re
+import subprocess
 import sys
 import tarfile
 import time
@@ -111,6 +112,14 @@ def parse_args():
     )
     urls_parser.add_argument("urls", nargs="+", help="One or more Prow Spyglass URLs")
     urls_parser.set_defaults(func=cmd_urls)
+
+    # pr: download failed jobs from a GitHub PR
+    pr_parser = subparsers.add_parser(
+        "pr",
+        help="Download failed prow jobs from a GitHub PR",
+    )
+    pr_parser.add_argument("pr_url", help="GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)")
+    pr_parser.set_defaults(func=cmd_pr)
 
     return parser.parse_args()
 
@@ -579,6 +588,95 @@ def collect_builds(start_url, count, failure=False, success=False):
         )
 
     return builds_collected[:count]
+
+
+def get_github_token():
+    """Get GitHub token from gh CLI. Returns None if unavailable."""
+    try:
+        token = subprocess.check_output(
+            ["gh", "auth", "token"], stderr=subprocess.DEVNULL, text=True
+        ).strip()
+        return token
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def fetch_failed_pr_jobs(owner, repo, pr_number, token=None):
+    """Fetch failed prow job URLs for a GitHub PR using the commit statuses API."""
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    # Get the PR's head SHA
+    pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
+    logger.info(f"Fetching PR info: {pr_url}")
+    response = requests.get(pr_url, headers=headers, timeout=30)
+    response.raise_for_status()
+    head_sha = response.json()["head"]["sha"]
+    logger.info(f"PR head SHA: {head_sha}")
+
+    # Get combined commit status (latest status per context, no duplicates)
+    status_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/status"
+    logger.info(f"Fetching commit statuses: {status_url}")
+    response = requests.get(status_url, headers=headers, timeout=30)
+    response.raise_for_status()
+    statuses = response.json().get("statuses", [])
+
+    # Filter for failed statuses with prow target URLs
+    failed_urls = [
+        s["target_url"]
+        for s in statuses
+        if s.get("state") == "failure" and s.get("target_url") and "prow" in s["target_url"]
+    ]
+
+    return failed_urls
+
+
+def cmd_pr(args, output_dir):
+    """Handle the 'pr' subcommand."""
+    # Parse GitHub PR URL
+    match = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", args.pr_url)
+    if not match:
+        logger.error(f"Invalid GitHub PR URL: {args.pr_url}")
+        sys.exit(1)
+
+    owner, repo, pr_number = match.group(1), match.group(2), match.group(3)
+    logger.info(f"Fetching failed jobs for {owner}/{repo}#{pr_number}")
+
+    token = get_github_token()
+    if not token:
+        logger.warning("No GitHub token found (gh CLI not available or not logged in). "
+                        "Using unauthenticated requests (rate-limited).")
+
+    try:
+        failed_urls = fetch_failed_pr_jobs(owner, repo, pr_number, token)
+    except requests.RequestException as e:
+        logger.error(f"Failed to fetch PR info from GitHub API: {e}")
+        sys.exit(1)
+
+    if not failed_urls:
+        logger.info("No failed prow jobs found for this PR")
+        sys.exit(0)
+
+    logger.info(f"Found {len(failed_urls)} failed prow job(s)")
+    for url in failed_urls:
+        logger.info(f"  {url}")
+
+    # Download each failed job using the same logic as cmd_urls
+    for i, url in enumerate(failed_urls, 1):
+        parsed = urlparse(url)
+        prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
+        build_id, spyglass_path = parse_spyglass_url(url)
+        logger.info(f"--- Processing build {i}/{len(failed_urls)} (ID: {build_id}) ---")
+
+        build = {
+            "ID": build_id,
+            "SpyglassLink": spyglass_path,
+        }
+        process_build(build, output_dir, prow_base_url)
+
+    write_agents_md(output_dir)
+    logger.info("Done")
 
 
 def cmd_history(args, output_dir):
