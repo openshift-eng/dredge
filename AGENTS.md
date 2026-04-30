@@ -3,6 +3,20 @@
 ## Purpose
 Downloads artifacts from Prow CI jobs for analysis.
 
+## Project Layout
+
+```
+pyproject.toml              - Project metadata and dependencies (uv/hatch)
+src/ci_tools/
+  __init__.py
+  __main__.py               - python -m ci_tools entry point
+  cli.py                    - CLI argument parsing, command handlers, main()
+  http.py                   - HTTP primitives (fetch, download, directory listing)
+  prow.py                   - Prow URL handling, build discovery, pagination
+  artifacts.py              - Artifact discovery, download, extraction, build processing
+  github.py                 - GitHub API integration (PR job fetching)
+```
+
 ## Architecture
 
 ### Data Flow
@@ -35,21 +49,26 @@ Downloads artifacts from Prow CI jobs for analysis.
 **history** - Download from job history page:
 ```bash
 # Download most recent N jobs (any result)
-python download_prow_job.py history <url> <count>
+uv run ci-tools history <url> <count>
 
 # Download only failed jobs
-python download_prow_job.py history <url> <count> --failure
+uv run ci-tools history <url> <count> --failure
 
 # Download only successful jobs
-python download_prow_job.py history <url> <count> --success
+uv run ci-tools history <url> <count> --success
 
 # Download jobs matching either result (excludes PENDING, ABORTED, etc.)
-python download_prow_job.py history <url> <count> --failure --success
+uv run ci-tools history <url> <count> --failure --success
 ```
 
 **urls** - Download specific builds by Spyglass URL:
 ```bash
-python download_prow_job.py urls <url> [<url> ...]
+uv run ci-tools urls <url> [<url> ...]
+```
+
+**pr** - Download failed prow jobs from a GitHub PR:
+```bash
+uv run ci-tools pr <github_pr_url>
 ```
 
 ### Options
@@ -58,43 +77,28 @@ python download_prow_job.py urls <url> [<url> ...]
 ## Common Modifications
 
 ### Adding new artifact types
-1. Add download logic in `process_build()`
+1. Add download logic in `artifacts.process_build()`
 2. Handle 404 gracefully (some builds may not have the artifact)
 
-Example:
-```python
-# In process_build(), after junit download:
-build_log_url = f"https://storage.googleapis.com/{gcs_path}/build-log.txt"
-build_log_dest = build_dir / "build-log.txt"
-download_artifact(build_log_url, build_log_dest)
-```
-
 ### Changing must-gather discovery
-The `discover_must_gather()` function parses gcsweb HTML to find subdirectories,
-then checks for `{subdir}/gather-must-gather/artifacts/must-gather.tar`.
-
-To search for a different pattern:
-```python
-# Modify the path pattern in discover_must_gather()
-must_gather_path = f"{subdir_name}/your-step-name/artifacts/your-file.tar"
-```
+The `artifacts.discover_must_gather()` function uses the step graph to find
+gather-must-gather steps, then checks for `must-gather.tar` in their artifacts.
 
 ### Pagination
-`get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
+`prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
 references the oldest build on the current page.
 
 ### Adding new subcommands
-1. Add a new subparser in `parse_args()`
-2. Implement `cmd_newmode(args, output_dir)`
+1. Add a new subparser in `cli.parse_args()`
+2. Implement `cmd_newmode(args, output_dir)` in `cli.py`
 3. Set `set_defaults(func=cmd_newmode)`
 
-No changes needed to main() or existing commands.
-
 ### Incremental Downloads
-The script skips downloading individual artifacts that already exist:
+The tool skips downloading individual artifacts that already exist:
 - `junit_operator.xml`: Skipped if file exists
 - `junit/`: Skipped if directory exists
 - `must-gather/`: Skipped if directory exists
+- `hypershift-dumps/`: Skipped if directory exists
 
 The `build_info.json` metadata file is always updated. To force re-download
 of an artifact, delete that specific file or directory.
@@ -106,31 +110,6 @@ Each build directory contains `build_info.json` with:
 - `prow_job_link`: Link to the Prow job page (Spyglass view)
 - `pr_link`: GitHub PR URL (if PR job)
 - `commit_link`: GitHub commit URL being tested
-
-## File Structure
-
-```
-download_prow_job.py
-├── parse_args()           - CLI arguments with subparsers (history, urls)
-├── setup_logging()        - Timestamped logging
-├── fetch_page()           - HTTP GET with retries
-├── extract_builds()       - Regex extract `var allBuilds = [...]` JSON
-├── filter_builds()        - Filter by Result (FAILURE, SUCCESS, or both)
-├── get_next_page_url()    - Find "Older Runs" link
-├── spyglass_to_gcs_path() - Convert to GCS path
-├── parse_spyglass_url()   - Extract build ID and path from Spyglass URL
-├── download_artifact()    - Stream download, return False on 404
-├── parse_junit_operator_steps() - Extract step names from junit_operator.xml
-├── discover_and_download_junit() - Find and download per-step junit XML files
-├── discover_must_gather() - List artifacts dir, find must-gather path
-├── extract_tgz()          - Extract .tar as gzip
-├── write_build_metadata() - Write build_info.json with PR/commit links
-├── process_build()        - Download artifacts for one build
-├── collect_builds()       - Paginate to collect N builds with filtering
-├── cmd_history()          - Handler for 'history' subcommand
-├── cmd_urls()             - Handler for 'urls' subcommand
-└── main()                 - Parse args, dispatch to subcommand handler
-```
 
 ## Error Handling
 
@@ -147,40 +126,25 @@ download_prow_job.py
 | Invalid URL in urls mode | Error log, skip that URL |
 
 ## Testing
-Run with a small count (2-3) against a known job history URL.
-Verify directory creation, artifact downloads, and must-gather extraction.
-
 ```bash
-# Test history mode - all jobs (default behavior)
-python download_prow_job.py history \
-    "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
-    2
+# Verify help text
+uv run ci-tools --help
+
+# Test urls mode
+uv run ci-tools urls \
+    "https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-release-master-ci-4.22-e2e-azure-ovn-upgrade/2016123606924267520"
 
 # Test history mode - failures only
-python download_prow_job.py history \
+uv run ci-tools history \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     2 --failure
 
-# Test history mode - successes only
-python download_prow_job.py history \
-    "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
-    2 --success
-
-# Test urls mode
-python download_prow_job.py urls \
-    "https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-release-master-ci-4.22-e2e-azure-ovn-upgrade/2016123606924267520"
-
 # With custom output directory
-python download_prow_job.py -o ./artifacts history \
+uv run ci-tools -o ./artifacts history \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     5
-
-# Verify help text
-python download_prow_job.py --help
-python download_prow_job.py history --help
-python download_prow_job.py urls --help
 ```
 
 ## Dependencies
-- Python 3.7+
-- `requests` library (`pip install requests`)
+- Python 3.10+
+- `requests` library (managed via pyproject.toml / uv)
