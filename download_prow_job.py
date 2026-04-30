@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -46,6 +47,12 @@ Each subdirectory is named by build ID and may contain:
 
 - `junit_operator.xml` - JUnit XML test results from the CI operator
 
+- `junit/` - Per-step JUnit XML test results (if available)
+  - `{{inner-step}}/` - One subdirectory per step that produced JUnit output
+    - `junit_e2e__*.xml` - Individual e2e test results
+    - `e2e-monitor-tests__*.xml` - Monitor test results
+    - Other JUnit XML files from the step
+
 - `must-gather/` - Extracted must-gather diagnostic data (if available)
 
 - `hypershift-dumps/` - Extracted HyperShift hosted cluster dumps (if available)
@@ -56,8 +63,10 @@ Each subdirectory is named by build ID and may contain:
 ## Analyzing Test Failures
 
 1. Check `build_info.json` for the job link and PR context
-2. Parse `junit_operator.xml` to find failed test cases
-3. For cluster issues, examine logs in `must-gather/`
+2. Parse `junit_operator.xml` to find failed CI steps
+3. Parse `junit/{{step}}/junit_e2e__*.xml` for individual e2e test failures
+4. Parse `junit/{{step}}/e2e-monitor-tests__*.xml` for monitor test failures
+5. For cluster issues, examine logs in `must-gather/`
 
 ## must-gather Contents
 
@@ -352,6 +361,84 @@ def list_gcsweb_dir(url):
     return subdirs, files
 
 
+def parse_junit_operator_steps(junit_path):
+    """
+    Parse junit_operator.xml to extract multi-stage test name and inner step names.
+    Returns (test_name, [inner_step_names]) or (None, []) if not parseable.
+
+    Test case names follow the pattern:
+      "Run multi-stage test {test_name} - {test_name}-{inner_step} container test"
+    """
+    try:
+        tree = ET.parse(junit_path)
+    except (ET.ParseError, OSError) as e:
+        logger.warning(f"Failed to parse {junit_path}: {e}")
+        return None, []
+
+    test_name = None
+    inner_steps = []
+
+    for tc in tree.getroot().iter("testcase"):
+        name = tc.get("name", "")
+        m = re.match(r"Run multi-stage test (\S+) - (\S+) container test", name)
+        if not m:
+            continue
+        step_test_name, full_step = m.group(1), m.group(2)
+        if test_name is None:
+            test_name = step_test_name
+        prefix = step_test_name + "-"
+        if full_step.startswith(prefix):
+            inner_steps.append(full_step[len(prefix):])
+        else:
+            inner_steps.append(full_step)
+
+    return test_name, inner_steps
+
+
+def discover_and_download_junit(gcs_path, gcsweb_base, test_name, inner_steps, junit_dir):
+    """
+    Find and download JUnit XML files from inner step artifact directories.
+
+    For each inner step, checks two locations:
+      1. {step}/artifacts/junit/*.xml  - standard junit output directory
+      2. {step}/artifacts/junit*.xml   - junit files at the artifacts root
+
+    Downloads into junit_dir/{inner_step}/.
+    """
+    total = 0
+
+    for inner_step in inner_steps:
+        step_base = f"{gcs_path}/artifacts/{test_name}/{inner_step}/artifacts"
+        dest_dir = junit_dir / inner_step
+        downloaded = 0
+
+        # Check artifacts/junit/ subdirectory
+        junit_subdir_url = f"{gcsweb_base}{step_base}/junit/"
+        _, files = list_gcsweb_dir(junit_subdir_url)
+        xml_files = [f for f in files if f.endswith(".xml")]
+        for filename in xml_files:
+            dest = dest_dir / filename
+            url = f"{gcsweb_base}{step_base}/junit/{filename}"
+            if download_artifact(url, dest):
+                downloaded += 1
+
+        # Check artifacts/ root for junit*.xml files
+        artifacts_url = f"{gcsweb_base}{step_base}/"
+        _, root_files = list_gcsweb_dir(artifacts_url)
+        root_xml = [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]
+        for filename in root_xml:
+            dest = dest_dir / filename
+            url = f"{gcsweb_base}{step_base}/{filename}"
+            if download_artifact(url, dest):
+                downloaded += 1
+
+        if downloaded:
+            logger.info(f"Downloaded {downloaded} junit file(s) from {inner_step}")
+        total += downloaded
+
+    return total
+
+
 def discover_must_gather(gcs_path, gcsweb_base, step_graph):
     """
     Find must-gather.tar using step graph to identify test steps.
@@ -516,6 +603,21 @@ def process_build(build, output_dir, prow_base_url):
         junit_url = f"{gcsweb_base}{gcs_path}/artifacts/junit_operator.xml"
         if not download_artifact(junit_url, junit_dest):
             logger.warning(f"Build {build_id}: junit_operator.xml not available")
+
+    # Discover and download per-step junit files if not already present
+    junit_dir = build_dir / "junit"
+    if junit_dir.exists():
+        logger.info(f"Build {build_id}: junit directory already exists, skipping")
+    elif junit_dest.exists():
+        test_name, inner_steps = parse_junit_operator_steps(junit_dest)
+        if test_name and inner_steps:
+            count = discover_and_download_junit(gcs_path, gcsweb_base, test_name, inner_steps, junit_dir)
+            if count:
+                logger.info(f"Build {build_id}: downloaded {count} junit file(s) across steps")
+            else:
+                logger.info(f"Build {build_id}: no per-step junit files found")
+        else:
+            logger.info(f"Build {build_id}: no multi-stage test steps found in junit_operator.xml")
 
     # Fetch step graph for artifact discovery
     step_graph = fetch_step_graph(gcs_path, gcsweb_base)

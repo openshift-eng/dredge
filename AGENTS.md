@@ -12,6 +12,7 @@ Downloads artifacts from Prow CI jobs for analysis.
 4. For each build:
    - Convert SpyglassLink to GCS path (strip "/view/gs/" prefix)
    - **Download junit_operator.xml if not already present**
+   - **Parse junit_operator.xml step names, discover and download per-step junit XML files**
    - List artifacts directory to discover must-gather location
    - **Download and extract must-gather if not already present**
    - **Always write/update build_info.json with PR link, commit link, execution date**
@@ -92,6 +93,7 @@ No changes needed to main() or existing commands.
 ### Incremental Downloads
 The script skips downloading individual artifacts that already exist:
 - `junit_operator.xml`: Skipped if file exists
+- `junit/`: Skipped if directory exists
 - `must-gather/`: Skipped if directory exists
 
 The `build_info.json` metadata file is always updated. To force re-download
@@ -118,6 +120,8 @@ download_prow_job.py
 ├── spyglass_to_gcs_path() - Convert to GCS path
 ├── parse_spyglass_url()   - Extract build ID and path from Spyglass URL
 ├── download_artifact()    - Stream download, return False on 404
+├── parse_junit_operator_steps() - Extract step names from junit_operator.xml
+├── discover_and_download_junit() - Find and download per-step junit XML files
 ├── discover_must_gather() - List artifacts dir, find must-gather path
 ├── extract_tgz()          - Extract .tar as gzip
 ├── write_build_metadata() - Write build_info.json with PR/commit links
@@ -135,6 +139,8 @@ download_prow_job.py
 | Network error | Retry 3x with backoff, then fail |
 | allBuilds not in HTML | Exit with error (page structure changed) |
 | junit_operator.xml 404 | Warn, continue |
+| junit_operator.xml unparseable | Warn, skip per-step junit download |
+| Per-step junit 404 | Info log (expected), continue |
 | must-gather 404 | Info log (expected), continue |
 | Extraction fails | Warn, keep tar for inspection |
 | Fewer builds than requested | Warn with counts, continue |
