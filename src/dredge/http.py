@@ -35,51 +35,52 @@ def session_get(url, **kwargs):
     return response
 
 
-def fetch_page(url, retries=3, backoff=2):
-    """HTTP GET with retries and exponential backoff."""
+def _request_with_retry(request_fn, retries=3, backoff=2):
+    """Call request_fn() with retry and exponential backoff. Returns response."""
     for attempt in range(retries):
         try:
-            logger.info(f"Fetching: {url}")
-            response = session_get(url, timeout=30)
-            response.raise_for_status()
-            return response.text
-        except requests.RequestException as e:
+            return request_fn()
+        except requests.RequestException:
             if attempt < retries - 1:
                 wait_time = backoff ** (attempt + 1)
-                logger.warning(f"Request failed: {e}. Retrying in {wait_time}s...")
+                logger.warning(f"Request failed. Retrying in {wait_time}s...")
                 time.sleep(wait_time)
             else:
-                logger.error(f"Request failed after {retries} attempts: {e}")
                 raise
-    return None
+
+
+def fetch_page(url, retries=3, backoff=2):
+    """HTTP GET with retries and exponential backoff."""
+    logger.info(f"Fetching: {url}")
+    response = _request_with_retry(
+        lambda: session_get(url, timeout=30), retries, backoff
+    )
+    response.raise_for_status()
+    return response.text
 
 
 def download_artifact(url, dest, retries=3, backoff=2):
     """Stream download artifact to destination. Returns False on 404."""
-    for attempt in range(retries):
-        try:
-            logger.info(f"Downloading: {url}")
-            response = session_get(url, stream=True, timeout=60)
-            if response.status_code == 404:
-                logger.info(f"Artifact not found (404): {url}")
-                return False
-            response.raise_for_status()
+    logger.info(f"Downloading: {url}")
+    try:
+        response = _request_with_retry(
+            lambda: session_get(url, stream=True, timeout=60), retries, backoff
+        )
+    except requests.RequestException as e:
+        logger.warning(f"Download failed after {retries} attempts: {e}")
+        return False
 
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with open(dest, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            logger.info(f"Downloaded to: {dest}")
-            return True
-        except requests.RequestException as e:
-            if attempt < retries - 1:
-                wait_time = backoff ** (attempt + 1)
-                logger.warning(f"Download failed: {e}. Retrying in {wait_time}s...")
-                time.sleep(wait_time)
-            else:
-                logger.warning(f"Download failed after {retries} attempts: {e}")
-                return False
-    return False
+    if response.status_code == 404:
+        logger.info(f"Artifact not found (404): {url}")
+        return False
+    response.raise_for_status()
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with open(dest, "wb") as f:
+        for chunk in response.iter_content(chunk_size=8192):
+            f.write(chunk)
+    logger.info(f"Downloaded to: {dest}")
+    return True
 
 
 def list_gcsweb_dir(url):

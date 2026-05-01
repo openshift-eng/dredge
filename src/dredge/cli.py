@@ -11,7 +11,6 @@ import requests
 from . import artifacts
 from . import auth
 from . import github
-from . import http
 from . import prow
 
 logger = logging.getLogger(__name__)
@@ -186,10 +185,7 @@ def cmd_pr(args, output_dir):
         build_id, spyglass_path = prow.parse_spyglass_url(url)
         logger.info(f"--- Processing build {i}/{len(failed_urls)} (ID: {build_id}) ---")
 
-        build = {
-            "ID": build_id,
-            "SpyglassLink": spyglass_path,
-        }
+        build = prow.Build(id=build_id, spyglass_link=spyglass_path, pr_link=args.pr_url)
         artifacts.process_build(build, output_dir, prow_base_url,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
@@ -220,12 +216,13 @@ def cmd_history(args, output_dir):
     logger.info(f"Starting download of {args.count} builds{filter_str} from: {args.url}")
     logger.info(f"Output directory: {output_dir.absolute()}")
 
-    builds = prow.collect_builds(args.url, args.count, failure=args.failure, success=args.success)
+    raw_builds = prow.collect_builds(args.url, args.count, failure=args.failure, success=args.success)
 
-    if not builds:
+    if not raw_builds:
         logger.warning("No builds found matching criteria")
         sys.exit(0)
 
+    builds = [prow.Build.from_prow_json(b) for b in raw_builds]
     logger.info(f"Processing {len(builds)} builds")
 
     auto_mg, auto_hs = _resolve_auto_flags(args)
@@ -258,11 +255,7 @@ def cmd_urls(args, output_dir):
         build_id, spyglass_path = prow.parse_spyglass_url(url)
         logger.info(f"--- Processing build {i}/{len(args.urls)} (ID: {build_id}) ---")
 
-        build = {
-            "ID": build_id,
-            "SpyglassLink": spyglass_path,
-        }
-
+        build = prow.Build(id=build_id, spyglass_link=spyglass_path)
         artifacts.process_build(build, output_dir, prow_base_url,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
@@ -283,29 +276,10 @@ def cmd_must_gather(args, output_dir):
     gcsweb_base = info["gcsweb_base"]
     steps = info.get("steps", {})
 
-    extract_dir = build_dir / "must-gather"
-    if extract_dir.exists():
-        logger.info("must-gather directory already exists, skipping")
-        return
-
-    if args.step_name:
-        must_gather_gcs_path = f"{gcs_path}/artifacts/{args.step_name}/gather-must-gather/artifacts/must-gather.tar"
-    else:
-        if not steps:
-            logger.error("No step data in build_info.json; specify step_name explicitly")
-            sys.exit(1)
-        must_gather_gcs_path = artifacts.discover_must_gather(gcs_path, steps)
-
-    if not must_gather_gcs_path:
-        logger.error("Could not find must-gather in any step")
-        sys.exit(1)
-
-    must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
-    tar_dest = build_dir / "must-gather.tar"
-    if http.download_artifact(must_gather_url, tar_dest):
-        artifacts.extract_tgz(tar_dest, extract_dir)
-    else:
-        logger.error(f"Failed to download must-gather")
+    try:
+        artifacts.download_must_gather(build_dir, gcs_path, gcsweb_base, steps, args.step_name)
+    except artifacts.ArtifactError as e:
+        logger.error(str(e))
         sys.exit(1)
 
 
@@ -321,34 +295,11 @@ def cmd_hypershift_dump(args, output_dir):
     gcsweb_base = info["gcsweb_base"]
     steps = info.get("steps", {})
 
-    hypershift_dir = build_dir / "hypershift-dumps"
-    if hypershift_dir.exists():
-        logger.info("hypershift-dumps directory already exists, skipping")
-        return
-
-    if args.step_name:
-        if args.step_name not in steps:
-            logger.error(f"Step '{args.step_name}' not found in build_info.json steps")
-            sys.exit(1)
-        filtered_steps = {args.step_name: steps[args.step_name]}
-    else:
-        filtered_steps = steps
-
-    if not filtered_steps:
-        logger.error("No step data in build_info.json; specify step_name explicitly")
+    try:
+        artifacts.download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, args.step_name)
+    except artifacts.ArtifactError as e:
+        logger.error(str(e))
         sys.exit(1)
-
-    dumps = artifacts.discover_hypershift_dumps(gcs_path, gcsweb_base, filtered_steps)
-    if not dumps:
-        logger.error("No hypershift dumps found")
-        sys.exit(1)
-
-    for test_name, tar_gcs_path in dumps:
-        tar_url = f"{gcsweb_base}{tar_gcs_path}"
-        tar_dest = build_dir / "hostedcluster.tar"
-        extract_dest = hypershift_dir / test_name
-        if http.download_artifact(tar_url, tar_dest):
-            artifacts.extract_tgz(tar_dest, extract_dest)
 
 
 def main():

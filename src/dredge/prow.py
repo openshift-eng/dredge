@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-import sys
+from dataclasses import dataclass
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -9,6 +9,29 @@ import requests
 from . import http
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Build:
+    id: str
+    spyglass_link: str
+    started: str | None = None
+    pr_link: str | None = None
+    commit_link: str | None = None
+
+    @classmethod
+    def from_prow_json(cls, d: dict) -> "Build":
+        refs = d.get("Refs") or {}
+        pulls = refs.get("pulls", [])
+        pull = pulls[0] if pulls else {}
+        return cls(
+            id=d.get("ID", "unknown"),
+            spyglass_link=d.get("SpyglassLink", ""),
+            started=d.get("Started"),
+            pr_link=pull.get("link"),
+            commit_link=pull.get("commit_link"),
+        )
+
 
 _gcsweb_base_cache = {}
 
@@ -18,16 +41,14 @@ def extract_builds(html):
     pattern = r"var\s+allBuilds\s*=\s*(\[.*?\]);"
     match = re.search(pattern, html, re.DOTALL)
     if not match:
-        logger.error("Could not find 'var allBuilds' in page HTML")
-        sys.exit(1)
+        raise ValueError("Could not find 'var allBuilds' in page HTML")
 
     try:
         builds = json.loads(match.group(1))
         logger.info(f"Found {len(builds)} builds on page")
         return builds
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse allBuilds JSON: {e}")
-        sys.exit(1)
+        raise ValueError(f"Failed to parse allBuilds JSON: {e}") from e
 
 
 def filter_builds(builds, failure=False, success=False):
@@ -135,7 +156,11 @@ def collect_builds(start_url, count, failure=False, success=False):
             logger.error("Failed to fetch job history page")
             break
 
-        builds = extract_builds(html)
+        try:
+            builds = extract_builds(html)
+        except ValueError as e:
+            logger.error(f"Failed to parse job history page: {e}")
+            break
         filtered = filter_builds(builds, failure=failure, success=success)
         builds_collected.extend(filtered)
 
