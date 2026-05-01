@@ -90,7 +90,7 @@ def discover_gcsweb_base(prow_base_url, spyglass_link):
     spyglass_url = f"{prow_base_url}{spyglass_link}"
     try:
         logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
-        response = requests.get(spyglass_url, timeout=30)
+        response = http.session_get(spyglass_url, timeout=30)
         response.raise_for_status()
         html = response.text
     except requests.RequestException as e:

@@ -4,6 +4,9 @@ version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = ["requests"]
 
+[project.optional-dependencies]
+kerberos = ["gssapi"]
+
 [project.scripts]
 ci-tools = "ci_tools.cli:main"
 

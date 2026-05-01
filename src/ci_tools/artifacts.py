@@ -72,7 +72,7 @@ def fetch_step_graph(gcs_path, gcsweb_base):
     url = f"{gcsweb_base}{gcs_path}/artifacts/ci-operator-step-graph.json"
     try:
         logger.info(f"Fetching step graph: {url}")
-        response = requests.get(url, timeout=30)
+        response = http.session_get(url, timeout=30)
         if response.status_code == 404:
             logger.error("Step graph not found (404)")
             return None

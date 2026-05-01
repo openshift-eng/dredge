@@ -11,7 +11,8 @@ src/ci_tools/
   __init__.py
   __main__.py               - python -m ci_tools entry point
   cli.py                    - CLI argument parsing, command handlers, main()
-  http.py                   - HTTP primitives (fetch, download, directory listing)
+  http.py                   - HTTP primitives (fetch, download, directory listing, auth-aware session)
+  auth.py                   - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
   prow.py                   - Prow URL handling, build discovery, pagination
   artifacts.py              - Artifact discovery, download, extraction, build processing
   github.py                 - GitHub API integration (PR job fetching)
@@ -20,7 +21,7 @@ src/ci_tools/
 ## Architecture
 
 ### Data Flow
-1. Fetch job history page HTML from prow.ci.openshift.org (history mode) or parse Spyglass URLs directly (urls mode)
+1. Fetch job history page HTML from Prow (history mode) or parse Spyglass URLs directly (urls mode)
 2. Extract `var allBuilds = [...]` JSON via regex (history mode only)
 3. Filter builds by result (optional: --failure, --success, or both)
 4. For each build:
@@ -32,6 +33,18 @@ src/ci_tools/
    - **Always write/update build_info.json with PR link, commit link, execution date**
 5. Follow "Older Runs" pagination link if more builds needed (history mode)
 
+### Authentication
+The tool automatically detects when a Prow deck requires authentication (via
+`_oauth_proxy` cookie in 403 responses) and follows the OAuth redirect chain
+using an existing Kerberos ticket. No user interaction required.
+
+- **Detection**: 403 response with `Set-Cookie: _oauth_proxy=`
+- **Auth chain**: follows HTTP 3xx redirects and scraped HTML redirects (forms, single-link pages)
+- **Kerberos**: SPNEGO authentication against `auth.redhat.com` only (via `gssapi` library)
+- **Trust boundary**: only follows redirects to trusted domains (`.openshiftapps.com`, `.openshift.org`, `.redhat.com` by default; extensible via `--trusted-redirect-domain`)
+- **Cookie cache**: `~/.config/ci-tools/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
+- **Loop detection**: keyed on `(method, url, domain-scoped cookies)` — allows legitimate OAuth revisits where server-side state has changed
+
 ### Key URL Transformations
 - SpyglassLink: `/view/gs/BUCKET/PATH` -> GCS path: `BUCKET/PATH`
 - Direct download: `https://storage.googleapis.com/{gcs_path}/...`
@@ -41,6 +54,7 @@ src/ci_tools/
 - Prow job history page structure (var allBuilds JSON)
 - GCS bucket public access via storage.googleapis.com
 - gcsweb directory listing HTML format
+- OpenShift OAuth / Kerberos chain for authenticated Prow instances
 
 ## CLI Usage
 
@@ -73,6 +87,7 @@ uv run ci-tools pr <github_pr_url>
 
 ### Options
 - `-o, --output-dir`: Output directory (default: current directory)
+- `--trusted-redirect-domain`: Additional trusted domain for auth redirects (may be repeated; prefix with `.` for suffix match)
 
 ## Common Modifications
 
@@ -124,6 +139,11 @@ Each build directory contains `build_info.json` with:
 | Extraction fails | Warn, keep tar for inspection |
 | Fewer builds than requested | Warn with counts, continue |
 | Invalid URL in urls mode | Error log, skip that URL |
+| Auth required, no gssapi | Error: install with `uv sync --extra kerberos` |
+| Auth required, no Kerberos ticket | Error: run `kinit` and retry |
+| Auth redirect to untrusted domain | Error: use `--trusted-redirect-domain` |
+| Auth redirect loop | Error with URL (keyed on method+url+cookies) |
+| Cached cookie expired | Clear cache for that domain, re-authenticate |
 
 ## Testing
 ```bash
@@ -143,8 +163,13 @@ uv run ci-tools history \
 uv run ci-tools -o ./artifacts history \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     5
+
+# Authenticated Prow deck (requires kinit + gssapi)
+uv run ci-tools urls \
+    "https://qe-private-deck-ci.apps.ci.l2s4.p1.openshiftapps.com/view/gs/qe-private-deck/..."
 ```
 
 ## Dependencies
 - Python 3.10+
 - `requests` library (managed via pyproject.toml / uv)
+- `gssapi` (optional, for Kerberos auth): `uv sync --extra kerberos`

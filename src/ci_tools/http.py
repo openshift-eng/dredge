@@ -1,10 +1,38 @@
 import logging
 import re
 import time
+from urllib.parse import urlparse
 
 import requests
 
+from . import auth
+
 logger = logging.getLogger(__name__)
+
+_session = None
+_auth_failed_domains = set()
+
+
+def _get_session():
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
+
+def session_get(url, **kwargs):
+    session = _get_session()
+    response = session.get(url, **kwargs)
+
+    if auth.is_oauth_proxy_auth_required(response):
+        domain = urlparse(url).netloc
+        if domain not in _auth_failed_domains:
+            if auth.authenticate_session(session, response, url):
+                response = session.get(url, **kwargs)
+            else:
+                _auth_failed_domains.add(domain)
+
+    return response
 
 
 def fetch_page(url, retries=3, backoff=2):
@@ -12,7 +40,7 @@ def fetch_page(url, retries=3, backoff=2):
     for attempt in range(retries):
         try:
             logger.info(f"Fetching: {url}")
-            response = requests.get(url, timeout=30)
+            response = session_get(url, timeout=30)
             response.raise_for_status()
             return response.text
         except requests.RequestException as e:
@@ -31,7 +59,7 @@ def download_artifact(url, dest, retries=3, backoff=2):
     for attempt in range(retries):
         try:
             logger.info(f"Downloading: {url}")
-            response = requests.get(url, stream=True, timeout=60)
+            response = session_get(url, stream=True, timeout=60)
             if response.status_code == 404:
                 logger.info(f"Artifact not found (404): {url}")
                 return False
@@ -59,7 +87,7 @@ def list_gcsweb_dir(url):
     Returns (subdirs, files) tuple of name lists, or ([], []) on error/404.
     """
     try:
-        response = requests.get(url, timeout=30)
+        response = session_get(url, timeout=30)
         if response.status_code == 404:
             return [], []
         response.raise_for_status()

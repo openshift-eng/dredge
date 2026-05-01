@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 import requests
 
 from . import artifacts
+from . import auth
 from . import github
 from . import prow
 
@@ -33,6 +34,12 @@ def parse_args():
         "--output-dir",
         default=".",
         help="Output directory (default: current directory)",
+    )
+    parser.add_argument(
+        "--trusted-redirect-domain",
+        action="append",
+        default=[],
+        help="Additional trusted domain for auth redirects (may be repeated; prefix with '.' for suffix match)",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -188,6 +195,8 @@ def cmd_urls(args, output_dir):
 def main():
     setup_logging()
     args = parse_args()
+
+    auth.configure(extra_trusted_domains=args.trusted_redirect_domain)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
