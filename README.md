@@ -120,6 +120,23 @@ To allow redirects to additional domains during authentication:
 dredge --trusted-redirect-domain .example.com urls -d ./artifacts <url>
 ```
 
+## Claude Code plugin
+
+Dredge includes a [Claude Code](https://claude.ai/code) plugin that teaches Claude how to download and analyze Prow CI job logs. Install it from the dredge marketplace:
+
+```
+/plugin marketplace add openshift-cloud-team/dredge
+/plugin install prow-job-download@dredge-plugins
+```
+
+To update the plugin after the repo is updated:
+
+```
+/plugin marketplace update dredge-plugins
+```
+
+Once installed, use `/prow-job-download:prow-job-download` in any project to download Prow job logs by providing a GitHub PR URL, Prow Spyglass URL, or job history URL.
+
 ## Running without installing
 
 ```sh
