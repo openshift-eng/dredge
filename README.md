@@ -6,16 +6,32 @@ Dredge automates the process of navigating Prow's web UI and GCS buckets to retr
 
 ## Installation
 
-Requires Python 3.10+. Install with [uv](https://docs.astral.sh/uv/):
+Requires Python 3.10+. Install with [uv](https://docs.astral.sh/uv/).
+
+The repo is private, so configure git authentication first:
 
 ```sh
-uv sync
+gh auth setup-git
+```
+
+Then install dredge as a CLI tool:
+
+```sh
+uv tool install git+https://github.com/openshift-cloud-team/dredge
 ```
 
 For authenticated Prow decks (e.g. Red Hat internal), install with Kerberos support:
 
 ```sh
-uv sync --extra kerberos
+uv tool install --with "dredge[kerberos]" git+https://github.com/openshift-cloud-team/dredge
+```
+
+### Development
+
+To work on dredge locally, clone the repo and install dependencies:
+
+```sh
+uv sync
 ```
 
 ## Usage
