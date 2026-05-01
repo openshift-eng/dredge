@@ -169,6 +169,20 @@ uv run dredge urls \
     "https://qe-private-deck-ci.apps.ci.l2s4.p1.openshiftapps.com/view/gs/qe-private-deck/..."
 ```
 
+## Prow Job Artifact Structure References
+
+The artifacts this tool downloads are produced by `ci-operator` in [openshift/ci-tools](https://github.com/openshift/ci-tools). Key source files:
+
+- **`junit_operator.xml` generation**: `cmd/ci-operator/main.go` — `writeJUnit(suites, "operator")` saves ci-operator's own execution report. Each multi-stage test step becomes a `<testcase>` named `"Run multi-stage test {test} - {test}-{step} container test"`. Failure output is the step's error string, which includes the kubelet's truncated container termination message (not the full log).
+
+- **Step execution and error construction**: `pkg/steps/run.go` — `Run()` executes the step graph as a DAG, creating one junit test case per step from `err.Error()`. `pkg/steps/multi_stage/run.go` — `runPod()` constructs the error for failed multi-stage steps, wrapping the result from `pkg/util/pods.go` `WaitForPodCompletion()` → `processPodEvent()`.
+
+- **Step graph JSON**: `pkg/api/graph.go` — `CIOperatorStepDetails` / `CIOperatorStepDetailInfo` define the schema for `ci-operator-step-graph.json`. Includes `name`, `failed`, `started_at`, `finished_at`, `duration`, `dependencies`. Note: `substeps` field exists in the struct but is not populated for multi-stage tests in practice.
+
+- **Artifact directory layout**: Multi-stage test artifacts land under `artifacts/{test_name}/{inner_step}/`. The inner step directory name is the step name with the test name prefix stripped (e.g. step `e2e-aws-ovn-openshift-e2e-test` → directory `openshift-e2e-test`). Each step directory contains `build-log.txt` (complete container log) and an `artifacts/` subdirectory with step-produced files (junit XML, etc.).
+
+- **Per-container sub-tests**: `pkg/steps/artifacts.go` — `TestCaseNotifier.SubTests()` generates per-container junit entries from the `ci-operator.openshift.io/container-sub-tests` pod annotation. Failure output is `state.Terminated.Message`, subject to kubelet's 4KB termination message limit.
+
 ## Dependencies
 - Python 3.10+
 - `requests` library (managed via pyproject.toml / uv)
