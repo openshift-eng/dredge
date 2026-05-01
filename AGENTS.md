@@ -28,10 +28,10 @@ src/dredge/
    - Convert SpyglassLink to GCS path (strip "/view/gs/" prefix)
    - **Download junit_operator.xml if not already present**
    - **Fetch and save ci-operator-step-graph.json if not already present**
-   - **Build step hierarchy from junit + step graph; write build_info.json (with steps)**
+   - **Build step hierarchy from junit + step graph; write build_info.json (with steps, gcs_path, gcsweb_base)**
    - **Download build-log.txt and junit XML for failed steps (from hierarchy)**
-   - **Discover and download must-gather using step hierarchy (deterministic path)**
-   - **Discover and download hypershift dumps using step hierarchy**
+   - **If --auto-must-gather: discover and download must-gather using step hierarchy**
+   - **If --auto-hypershift: discover and download hypershift dumps using step hierarchy**
 5. Follow "Older Runs" pagination link if more builds needed (history mode)
 
 ### Authentication
@@ -59,35 +59,64 @@ using an existing Kerberos ticket. No user interaction required.
 
 ## CLI Usage
 
-### Subcommands
+### Discovery Subcommands
+
+All discovery subcommands require `-d <dir>` to specify the output directory.
 
 **history** - Download from job history page:
 ```bash
 # Download most recent N jobs (any result)
-uv run dredge history <url> <count>
+uv run dredge history -d ./artifacts <url> <count>
 
 # Download only failed jobs
-uv run dredge history <url> <count> --failure
+uv run dredge history -d ./artifacts <url> <count> --failure
 
 # Download only successful jobs
-uv run dredge history <url> <count> --success
+uv run dredge history -d ./artifacts <url> <count> --success
 
-# Download jobs matching either result (excludes PENDING, ABORTED, etc.)
-uv run dredge history <url> <count> --failure --success
+# Download with automatic must-gather and hypershift dump downloads
+uv run dredge history -d ./artifacts <url> <count> --failure --auto
 ```
 
 **urls** - Download specific builds by Spyglass URL:
 ```bash
-uv run dredge urls <url> [<url> ...]
+uv run dredge urls -d ./artifacts <url> [<url> ...]
 ```
 
 **pr** - Download failed prow jobs from a GitHub PR:
 ```bash
-uv run dredge pr <github_pr_url>
+uv run dredge pr -d ./artifacts <github_pr_url>
 ```
 
-### Options
-- `-o, --output-dir`: Output directory (default: current directory)
+### Discovery Options
+- `-d DIR`: Output directory (required)
+- `--auto-must-gather`: Automatically download must-gather from steps that contain one
+- `--auto-hypershift`: Automatically download hypershift hosted cluster dumps
+- `--auto`: Enable all automatic artifact downloads (equivalent to --auto-must-gather --auto-hypershift)
+
+### Standalone Artifact Subcommands
+
+These operate on an existing build directory (previously fetched by a discovery command).
+
+**must-gather** - Download must-gather from a build directory:
+```bash
+# Auto-detect which step has the must-gather
+uv run dredge must-gather ./artifacts/<build_id>
+
+# Specify the step name explicitly
+uv run dredge must-gather ./artifacts/<build_id> e2e-aws-ovn
+```
+
+**hypershift-dump** - Download hypershift dumps from a build directory:
+```bash
+# Auto-detect hypershift test steps
+uv run dredge hypershift-dump ./artifacts/<build_id>
+
+# Specify the step name explicitly
+uv run dredge hypershift-dump ./artifacts/<build_id> e2e-hypershift
+```
+
+### Global Options
 - `--trusted-redirect-domain`: Additional trusted domain for auth redirects (may be repeated; prefix with `.` for suffix match)
 
 ## Common Modifications
@@ -99,7 +128,9 @@ uv run dredge pr <github_pr_url>
 ### Changing must-gather discovery
 The `artifacts.discover_must_gather()` function uses the step hierarchy (built
 from junit + step graph) to find `gather-must-gather` inner steps, then returns
-a deterministic GCS path without HTTP directory listing.
+a deterministic GCS path without HTTP directory listing. Must-gather is not
+downloaded by default; use `--auto-must-gather` during discovery or the
+`must-gather` subcommand on an existing build directory.
 
 ### Pagination
 `prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
@@ -115,8 +146,8 @@ The tool skips downloading individual artifacts that already exist:
 - `junit_operator.xml`: Skipped if file exists
 - `ci-operator-step-graph.json`: Skipped if file exists (parsed from cache)
 - `build-logs/`: Skipped if directory exists
-- `must-gather/`: Skipped if directory exists
-- `hypershift-dumps/`: Skipped if directory exists
+- `must-gather/`: Skipped if directory exists (both --auto-must-gather and must-gather command)
+- `hypershift-dumps/`: Skipped if directory exists (both --auto-hypershift and hypershift-dump command)
 
 The `build_info.json` metadata file is always updated (including the `steps`
 hierarchy). To force re-download of an artifact, delete that specific file
@@ -129,6 +160,8 @@ Each build directory contains `build_info.json` with:
 - `prow_job_link`: Link to the Prow job page (Spyglass view)
 - `pr_link`: GitHub PR URL (if PR job)
 - `commit_link`: GitHub commit URL being tested
+- `gcs_path`: GCS bucket path for this build's artifacts (used by standalone commands)
+- `gcsweb_base`: Base URL for gcsweb artifact access (used by standalone commands)
 - `steps`: Hierarchical step structure keyed by test name, each with:
   - `failed`, `started_at`, `finished_at`, `duration_seconds`, `dependencies`
   - `inner_steps`: dict of inner step names to `{failed: bool}`
@@ -158,21 +191,27 @@ Each build directory contains `build_info.json` with:
 uv run dredge --help
 
 # Test urls mode
-uv run dredge urls \
+uv run dredge urls -d ./artifacts \
     "https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-release-master-ci-4.22-e2e-azure-ovn-upgrade/2016123606924267520"
 
 # Test history mode - failures only
-uv run dredge history \
+uv run dredge history -d ./artifacts \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     2 --failure
 
-# With custom output directory
-uv run dredge -o ./artifacts history \
+# With all auto artifact downloads
+uv run dredge history -d ./artifacts --auto \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     5
 
+# Standalone must-gather on existing build directory
+uv run dredge must-gather ./artifacts/<build_id>
+
+# Standalone hypershift-dump on existing build directory
+uv run dredge hypershift-dump ./artifacts/<build_id>
+
 # Authenticated Prow deck (requires kinit + gssapi)
-uv run dredge urls \
+uv run dredge urls -d ./artifacts \
     "https://qe-private-deck-ci.apps.ci.l2s4.p1.openshiftapps.com/view/gs/qe-private-deck/..."
 ```
 

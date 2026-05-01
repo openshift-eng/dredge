@@ -28,6 +28,8 @@ Each subdirectory is named by build ID and may contain:
   - `prow_job_link`: Link to the Prow job page (Spyglass view)
   - `pr_link`: GitHub PR URL (if PR job)
   - `commit_link`: GitHub commit URL being tested
+  - `gcs_path`: GCS bucket path for this build's artifacts
+  - `gcsweb_base`: Base URL for gcsweb artifact access
   - `steps`: Hierarchical CI step structure keyed by test name, each with:
     - `failed`, `started_at`, `finished_at`, `duration_seconds`, `dependencies`
     - `inner_steps`: dict of inner step names to `{{failed: bool}}`
@@ -42,9 +44,9 @@ Each subdirectory is named by build ID and may contain:
     - `junit_e2e__*.xml` - Individual e2e test results (if the step produced junit output)
     - `e2e-monitor-tests__*.xml` - Monitor test results (if available)
 
-- `must-gather/` - Extracted must-gather diagnostic data (if available)
+- `must-gather/` - Extracted must-gather diagnostic data (if downloaded via --auto-must-gather or must-gather command)
 
-- `hypershift-dumps/` - Extracted HyperShift hosted cluster dumps (if available)
+- `hypershift-dumps/` - Extracted HyperShift hosted cluster dumps (if downloaded via --auto-hypershift or hypershift-dump command)
   - `TestCreateCluster/` - Dump for each test case
   - `TestNodePool_HostedCluster0/`
   - Contains pod logs, events, and resource YAMLs from the hosted control plane
@@ -320,7 +322,8 @@ def write_agents_md(output_dir):
         return False
 
 
-def write_build_metadata(build, build_dir, prow_base_url, steps=None):
+def write_build_metadata(build, build_dir, prow_base_url, steps=None,
+                         gcs_path=None, gcsweb_base=None):
     """Write metadata JSON file for a build."""
     refs = build.get("Refs") or {}
     pulls = refs.get("pulls", [])
@@ -332,6 +335,8 @@ def write_build_metadata(build, build_dir, prow_base_url, steps=None):
         "prow_job_link": f"{prow_base_url}{spyglass_link}" if spyglass_link else None,
         "pr_link": pulls[0].get("link") if pulls else None,
         "commit_link": pulls[0].get("commit_link") if pulls else None,
+        "gcs_path": gcs_path,
+        "gcsweb_base": gcsweb_base,
     }
 
     if steps is not None:
@@ -343,7 +348,8 @@ def write_build_metadata(build, build_dir, prow_base_url, steps=None):
     logger.info(f"Wrote metadata to: {metadata_path}")
 
 
-def process_build(build, output_dir, prow_base_url):
+def process_build(build, output_dir, prow_base_url,
+                  auto_must_gather=False, auto_hypershift=False):
     """Download artifacts for one build."""
     build_id = build.get("ID", "unknown")
     build_dir = output_dir / str(build_id)
@@ -362,7 +368,7 @@ def process_build(build, output_dir, prow_base_url):
     gcsweb_base = prow.discover_gcsweb_base(prow_base_url, spyglass_link)
     if not gcsweb_base:
         logger.warning(f"Build {build_id}: Could not discover gcsweb URL, skipping artifact downloads")
-        write_build_metadata(build, build_dir, prow_base_url)
+        write_build_metadata(build, build_dir, prow_base_url, gcs_path=gcs_path)
         return
 
     # Download junit_operator.xml
@@ -385,7 +391,8 @@ def process_build(build, output_dir, prow_base_url):
     steps = build_step_hierarchy(junit_steps, step_graph)
 
     # Write build_info.json with step hierarchy
-    write_build_metadata(build, build_dir, prow_base_url, steps=steps)
+    write_build_metadata(build, build_dir, prow_base_url, steps=steps,
+                         gcs_path=gcs_path, gcsweb_base=gcsweb_base)
 
     # Download build logs and junit files for failed steps
     logs_dir = build_dir / "build-logs"
@@ -405,33 +412,33 @@ def process_build(build, output_dir, prow_base_url):
         else:
             logger.info(f"Build {build_id}: no failed multi-stage steps found")
 
-    if not steps:
+    if (auto_must_gather or auto_hypershift) and not steps:
         logger.warning(f"Build {build_id}: no step data available, skipping artifact discovery")
     else:
-        # Discover and download must-gather
-        extract_dir = build_dir / "must-gather"
-        if extract_dir.exists():
-            logger.info(f"Build {build_id}: must-gather already exists, skipping")
-        else:
-            must_gather_gcs_path = discover_must_gather(gcs_path, steps)
-            if must_gather_gcs_path:
-                must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
-                tar_dest = build_dir / "must-gather.tar"
-                if http.download_artifact(must_gather_url, tar_dest):
-                    extract_tgz(tar_dest, extract_dir)
+        if auto_must_gather:
+            extract_dir = build_dir / "must-gather"
+            if extract_dir.exists():
+                logger.info(f"Build {build_id}: must-gather already exists, skipping")
+            else:
+                must_gather_gcs_path = discover_must_gather(gcs_path, steps)
+                if must_gather_gcs_path:
+                    must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
+                    tar_dest = build_dir / "must-gather.tar"
+                    if http.download_artifact(must_gather_url, tar_dest):
+                        extract_tgz(tar_dest, extract_dir)
 
-        # Discover and download hostedcluster dumps
-        hypershift_dir = build_dir / "hypershift-dumps"
-        if hypershift_dir.exists():
-            logger.info(f"Build {build_id}: hypershift-dumps already exists, skipping")
-        else:
-            dumps = discover_hypershift_dumps(gcs_path, gcsweb_base, steps)
-            if dumps:
-                for test_name, tar_gcs_path in dumps:
-                    tar_url = f"{gcsweb_base}{tar_gcs_path}"
-                    tar_dest = build_dir / "hostedcluster.tar"
-                    extract_dest = hypershift_dir / test_name
-                    if http.download_artifact(tar_url, tar_dest):
-                        extract_tgz(tar_dest, extract_dest)
+        if auto_hypershift:
+            hypershift_dir = build_dir / "hypershift-dumps"
+            if hypershift_dir.exists():
+                logger.info(f"Build {build_id}: hypershift-dumps already exists, skipping")
+            else:
+                dumps = discover_hypershift_dumps(gcs_path, gcsweb_base, steps)
+                if dumps:
+                    for test_name, tar_gcs_path in dumps:
+                        tar_url = f"{gcsweb_base}{tar_gcs_path}"
+                        tar_dest = build_dir / "hostedcluster.tar"
+                        extract_dest = hypershift_dir / test_name
+                        if http.download_artifact(tar_url, tar_dest):
+                            extract_tgz(tar_dest, extract_dest)
 
     logger.info(f"Completed processing build {build_id}")

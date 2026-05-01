@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import re
 import sys
@@ -10,6 +11,7 @@ import requests
 from . import artifacts
 from . import auth
 from . import github
+from . import http
 from . import prow
 
 logger = logging.getLogger(__name__)
@@ -30,22 +32,40 @@ def parse_args():
         description="Download artifacts from Prow CI jobs",
     )
     parser.add_argument(
-        "-o",
-        "--output-dir",
-        default=".",
-        help="Output directory (default: current directory)",
-    )
-    parser.add_argument(
         "--trusted-redirect-domain",
         action="append",
         default=[],
         help="Additional trusted domain for auth redirects (may be repeated; prefix with '.' for suffix match)",
     )
 
+    discovery_parent = argparse.ArgumentParser(add_help=False)
+    discovery_parent.add_argument(
+        "-d",
+        required=True,
+        metavar="DIR",
+        help="Output directory for downloaded artifacts",
+    )
+    discovery_parent.add_argument(
+        "--auto-must-gather",
+        action="store_true",
+        help="Automatically download must-gather from steps that contain one",
+    )
+    discovery_parent.add_argument(
+        "--auto-hypershift",
+        action="store_true",
+        help="Automatically download hypershift hosted cluster dumps",
+    )
+    discovery_parent.add_argument(
+        "--auto",
+        action="store_true",
+        help="Enable all automatic artifact downloads",
+    )
+
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     history_parser = subparsers.add_parser(
         "history",
+        parents=[discovery_parent],
         help="Download jobs from a job history page",
     )
     history_parser.add_argument("url", help="Prow job history page URL")
@@ -64,6 +84,7 @@ def parse_args():
 
     urls_parser = subparsers.add_parser(
         "urls",
+        parents=[discovery_parent],
         help="Download specific builds by their Spyglass URLs",
     )
     urls_parser.add_argument("urls", nargs="+", help="One or more Prow Spyglass URLs")
@@ -71,12 +92,61 @@ def parse_args():
 
     pr_parser = subparsers.add_parser(
         "pr",
+        parents=[discovery_parent],
         help="Download failed prow jobs from a GitHub PR",
     )
     pr_parser.add_argument("pr_url", help="GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)")
     pr_parser.set_defaults(func=cmd_pr)
 
+    mg_parser = subparsers.add_parser(
+        "must-gather",
+        help="Download must-gather from an existing build directory",
+    )
+    mg_parser.add_argument("build_dir", type=Path, help="Path to an existing build directory")
+    mg_parser.add_argument("step_name", nargs="?", default=None, help="Step name (guessed if omitted)")
+    mg_parser.set_defaults(func=cmd_must_gather)
+
+    hs_parser = subparsers.add_parser(
+        "hypershift-dump",
+        help="Download hypershift hosted cluster dumps from an existing build directory",
+    )
+    hs_parser.add_argument("build_dir", type=Path, help="Path to an existing build directory")
+    hs_parser.add_argument("step_name", nargs="?", default=None, help="Step name (guessed if omitted)")
+    hs_parser.set_defaults(func=cmd_hypershift_dump)
+
     return parser.parse_args()
+
+
+def _resolve_auto_flags(args):
+    auto_must_gather = args.auto_must_gather or args.auto
+    auto_hypershift = args.auto_hypershift or args.auto
+    return auto_must_gather, auto_hypershift
+
+
+def _load_build_info(build_dir):
+    """Load and validate build_info.json from a build directory."""
+    build_info_path = build_dir / "build_info.json"
+    if not build_info_path.exists():
+        logger.error(f"build_info.json not found in {build_dir}")
+        sys.exit(1)
+
+    try:
+        with open(build_info_path) as f:
+            info = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error(f"Failed to read build_info.json: {e}")
+        sys.exit(1)
+
+    gcs_path = info.get("gcs_path")
+    gcsweb_base = info.get("gcsweb_base")
+    if not gcs_path or not gcsweb_base:
+        logger.error(
+            f"build_info.json in {build_dir} is missing gcs_path or gcsweb_base. "
+            "Re-run a discovery command (history/urls/pr) to update it."
+        )
+        sys.exit(1)
+
+    return info
 
 
 def cmd_pr(args, output_dir):
@@ -108,6 +178,8 @@ def cmd_pr(args, output_dir):
     for url in failed_urls:
         logger.info(f"  {url}")
 
+    auto_mg, auto_hs = _resolve_auto_flags(args)
+
     for i, url in enumerate(failed_urls, 1):
         parsed = urlparse(url)
         prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
@@ -118,7 +190,8 @@ def cmd_pr(args, output_dir):
             "ID": build_id,
             "SpyglassLink": spyglass_path,
         }
-        artifacts.process_build(build, output_dir, prow_base_url)
+        artifacts.process_build(build, output_dir, prow_base_url,
+                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     artifacts.write_agents_md(output_dir)
     logger.info("Done")
@@ -155,9 +228,12 @@ def cmd_history(args, output_dir):
 
     logger.info(f"Processing {len(builds)} builds")
 
+    auto_mg, auto_hs = _resolve_auto_flags(args)
+
     for i, build in enumerate(builds, 1):
         logger.info(f"--- Processing build {i}/{len(builds)} ---")
-        artifacts.process_build(build, output_dir, prow_base_url)
+        artifacts.process_build(build, output_dir, prow_base_url,
+                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     artifacts.write_agents_md(output_dir)
 
@@ -168,6 +244,8 @@ def cmd_urls(args, output_dir):
     """Handle the 'urls' subcommand."""
     logger.info(f"Downloading {len(args.urls)} builds by URL")
     logger.info(f"Output directory: {output_dir.absolute()}")
+
+    auto_mg, auto_hs = _resolve_auto_flags(args)
 
     for i, url in enumerate(args.urls, 1):
         parsed = urlparse(url)
@@ -185,11 +263,92 @@ def cmd_urls(args, output_dir):
             "SpyglassLink": spyglass_path,
         }
 
-        artifacts.process_build(build, output_dir, prow_base_url)
+        artifacts.process_build(build, output_dir, prow_base_url,
+                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     artifacts.write_agents_md(output_dir)
 
     logger.info("Done")
+
+
+def cmd_must_gather(args, output_dir):
+    """Handle the 'must-gather' subcommand."""
+    build_dir = Path(args.build_dir)
+    if not build_dir.is_dir():
+        logger.error(f"Build directory does not exist: {build_dir}")
+        sys.exit(1)
+
+    info = _load_build_info(build_dir)
+    gcs_path = info["gcs_path"]
+    gcsweb_base = info["gcsweb_base"]
+    steps = info.get("steps", {})
+
+    extract_dir = build_dir / "must-gather"
+    if extract_dir.exists():
+        logger.info("must-gather directory already exists, skipping")
+        return
+
+    if args.step_name:
+        must_gather_gcs_path = f"{gcs_path}/artifacts/{args.step_name}/gather-must-gather/artifacts/must-gather.tar"
+    else:
+        if not steps:
+            logger.error("No step data in build_info.json; specify step_name explicitly")
+            sys.exit(1)
+        must_gather_gcs_path = artifacts.discover_must_gather(gcs_path, steps)
+
+    if not must_gather_gcs_path:
+        logger.error("Could not find must-gather in any step")
+        sys.exit(1)
+
+    must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
+    tar_dest = build_dir / "must-gather.tar"
+    if http.download_artifact(must_gather_url, tar_dest):
+        artifacts.extract_tgz(tar_dest, extract_dir)
+    else:
+        logger.error(f"Failed to download must-gather")
+        sys.exit(1)
+
+
+def cmd_hypershift_dump(args, output_dir):
+    """Handle the 'hypershift-dump' subcommand."""
+    build_dir = Path(args.build_dir)
+    if not build_dir.is_dir():
+        logger.error(f"Build directory does not exist: {build_dir}")
+        sys.exit(1)
+
+    info = _load_build_info(build_dir)
+    gcs_path = info["gcs_path"]
+    gcsweb_base = info["gcsweb_base"]
+    steps = info.get("steps", {})
+
+    hypershift_dir = build_dir / "hypershift-dumps"
+    if hypershift_dir.exists():
+        logger.info("hypershift-dumps directory already exists, skipping")
+        return
+
+    if args.step_name:
+        if args.step_name not in steps:
+            logger.error(f"Step '{args.step_name}' not found in build_info.json steps")
+            sys.exit(1)
+        filtered_steps = {args.step_name: steps[args.step_name]}
+    else:
+        filtered_steps = steps
+
+    if not filtered_steps:
+        logger.error("No step data in build_info.json; specify step_name explicitly")
+        sys.exit(1)
+
+    dumps = artifacts.discover_hypershift_dumps(gcs_path, gcsweb_base, filtered_steps)
+    if not dumps:
+        logger.error("No hypershift dumps found")
+        sys.exit(1)
+
+    for test_name, tar_gcs_path in dumps:
+        tar_url = f"{gcsweb_base}{tar_gcs_path}"
+        tar_dest = build_dir / "hostedcluster.tar"
+        extract_dest = hypershift_dir / test_name
+        if http.download_artifact(tar_url, tar_dest):
+            artifacts.extract_tgz(tar_dest, extract_dest)
 
 
 def main():
@@ -198,7 +357,9 @@ def main():
 
     auth.configure(extra_trusted_domains=args.trusted_redirect_domain)
 
-    output_dir = Path(args.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = None
+    if hasattr(args, "d"):
+        output_dir = Path(args.d)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     args.func(args, output_dir)
