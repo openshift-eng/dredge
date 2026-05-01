@@ -31,11 +31,11 @@ Each subdirectory is named by build ID and may contain:
 
 - `junit_operator.xml` - JUnit XML test results from the CI operator
 
-- `junit/` - Per-step JUnit XML test results (if available)
-  - `{{inner-step}}/` - One subdirectory per step that produced JUnit output
-    - `junit_e2e__*.xml` - Individual e2e test results
-    - `e2e-monitor-tests__*.xml` - Monitor test results
-    - Other JUnit XML files from the step
+- `build-logs/` - Artifacts for failed steps only
+  - `{{step-name}}/` - One subdirectory per failed step
+    - `build-log.txt` - Complete untruncated build log
+    - `junit_e2e__*.xml` - Individual e2e test results (if the step produced junit output)
+    - `e2e-monitor-tests__*.xml` - Monitor test results (if available)
 
 - `must-gather/` - Extracted must-gather diagnostic data (if available)
 
@@ -48,8 +48,8 @@ Each subdirectory is named by build ID and may contain:
 
 1. Check `build_info.json` for the job link and PR context
 2. Parse `junit_operator.xml` to find failed CI steps
-3. Parse `junit/{{step}}/junit_e2e__*.xml` for individual e2e test failures
-4. Parse `junit/{{step}}/e2e-monitor-tests__*.xml` for monitor test failures
+3. Read `build-logs/{{step}}/build-log.txt` for complete failure output
+4. Parse `build-logs/{{step}}/junit_e2e__*.xml` for individual e2e test failures (if available)
 5. For cluster issues, examine logs in `must-gather/`
 
 ## must-gather Contents
@@ -86,78 +86,71 @@ def fetch_step_graph(gcs_path, gcsweb_base):
         return None
 
 
-def parse_junit_operator_steps(junit_path):
+def parse_junit_operator_failures(junit_path):
     """
-    Parse junit_operator.xml to extract multi-stage test name and inner step names.
-    Returns (test_name, [inner_step_names]) or (None, []) if not parseable.
+    Parse junit_operator.xml to extract failed multi-stage test steps.
+    Returns list of (test_name, inner_step_name) tuples for failed steps only.
 
     Test case names follow the pattern:
       "Run multi-stage test {test_name} - {test_name}-{inner_step} container test"
+
+    The artifact directory uses inner_step (prefix stripped), not the full step name.
     """
     try:
         tree = ET.parse(junit_path)
     except (ET.ParseError, OSError) as e:
         logger.warning(f"Failed to parse {junit_path}: {e}")
-        return None, []
+        return []
 
-    test_name = None
-    inner_steps = []
+    failures = []
 
     for tc in tree.getroot().iter("testcase"):
+        if tc.find("failure") is None:
+            continue
         name = tc.get("name", "")
         m = re.match(r"Run multi-stage test (\S+) - (\S+) container test", name)
         if not m:
             continue
-        step_test_name, full_step = m.group(1), m.group(2)
-        if test_name is None:
-            test_name = step_test_name
-        prefix = step_test_name + "-"
-        if full_step.startswith(prefix):
-            inner_steps.append(full_step[len(prefix):])
-        else:
-            inner_steps.append(full_step)
+        test_name, full_step = m.group(1), m.group(2)
+        prefix = test_name + "-"
+        inner_step = full_step[len(prefix):] if full_step.startswith(prefix) else full_step
+        failures.append((test_name, inner_step))
 
-    return test_name, inner_steps
+    return failures
 
 
-def discover_and_download_junit(gcs_path, gcsweb_base, test_name, inner_steps, junit_dir):
+def download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir):
     """
-    Find and download JUnit XML files from inner step artifact directories.
+    Download build-log.txt and any junit XML files for each failed step.
 
-    For each inner step, checks two locations:
-      1. {step}/artifacts/junit/*.xml  - standard junit output directory
-      2. {step}/artifacts/junit*.xml   - junit files at the artifacts root
-
-    Downloads into junit_dir/{inner_step}/.
+    build-log.txt is at a deterministic path (no directory listing needed).
+    junit files require up to 2 directory listing requests per failed step.
     """
     total = 0
 
-    for inner_step in inner_steps:
-        step_base = f"{gcs_path}/artifacts/{test_name}/{inner_step}/artifacts"
-        dest_dir = junit_dir / inner_step
-        downloaded = 0
+    for test_name, full_step_name in failures:
+        step_base = f"{gcs_path}/artifacts/{test_name}/{full_step_name}"
+        dest_dir = logs_dir / full_step_name
 
-        junit_subdir_url = f"{gcsweb_base}{step_base}/junit/"
+        build_log_url = f"{gcsweb_base}{step_base}/build-log.txt"
+        if http.download_artifact(build_log_url, dest_dir / "build-log.txt"):
+            total += 1
+
+        artifacts_base = f"{step_base}/artifacts"
+
+        junit_subdir_url = f"{gcsweb_base}{artifacts_base}/junit/"
         _, files = http.list_gcsweb_dir(junit_subdir_url)
-        xml_files = [f for f in files if f.endswith(".xml")]
-        for filename in xml_files:
-            dest = dest_dir / filename
-            url = f"{gcsweb_base}{step_base}/junit/{filename}"
-            if http.download_artifact(url, dest):
-                downloaded += 1
+        for filename in [f for f in files if f.endswith(".xml")]:
+            if http.download_artifact(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename):
+                total += 1
 
-        artifacts_url = f"{gcsweb_base}{step_base}/"
+        artifacts_url = f"{gcsweb_base}{artifacts_base}/"
         _, root_files = http.list_gcsweb_dir(artifacts_url)
-        root_xml = [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]
-        for filename in root_xml:
-            dest = dest_dir / filename
-            url = f"{gcsweb_base}{step_base}/{filename}"
-            if http.download_artifact(url, dest):
-                downloaded += 1
+        for filename in [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]:
+            if http.download_artifact(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename):
+                total += 1
 
-        if downloaded:
-            logger.info(f"Downloaded {downloaded} junit file(s) from {inner_step}")
-        total += downloaded
+        logger.info(f"Downloaded artifacts for failed step {full_step_name}")
 
     return total
 
@@ -317,20 +310,18 @@ def process_build(build, output_dir, prow_base_url):
         if not http.download_artifact(junit_url, junit_dest):
             logger.warning(f"Build {build_id}: junit_operator.xml not available")
 
-    # Discover and download per-step junit files
-    junit_dir = build_dir / "junit"
-    if junit_dir.exists():
-        logger.info(f"Build {build_id}: junit directory already exists, skipping")
+    # Download build logs and junit files for failed steps only
+    logs_dir = build_dir / "build-logs"
+    if logs_dir.exists():
+        logger.info(f"Build {build_id}: build-logs directory already exists, skipping")
     elif junit_dest.exists():
-        test_name, inner_steps = parse_junit_operator_steps(junit_dest)
-        if test_name and inner_steps:
-            count = discover_and_download_junit(gcs_path, gcsweb_base, test_name, inner_steps, junit_dir)
+        failures = parse_junit_operator_failures(junit_dest)
+        if failures:
+            count = download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir)
             if count:
-                logger.info(f"Build {build_id}: downloaded {count} junit file(s) across steps")
-            else:
-                logger.info(f"Build {build_id}: no per-step junit files found")
+                logger.info(f"Build {build_id}: downloaded {count} artifact(s) for failed steps")
         else:
-            logger.info(f"Build {build_id}: no multi-stage test steps found in junit_operator.xml")
+            logger.info(f"Build {build_id}: no failed multi-stage steps found")
 
     # Fetch step graph for artifact discovery
     step_graph = fetch_step_graph(gcs_path, gcsweb_base)

@@ -27,7 +27,7 @@ src/dredge/
 4. For each build:
    - Convert SpyglassLink to GCS path (strip "/view/gs/" prefix)
    - **Download junit_operator.xml if not already present**
-   - **Parse junit_operator.xml step names, discover and download per-step junit XML files**
+   - **Parse junit_operator.xml for failed steps, download build-log.txt and junit XML for each**
    - List artifacts directory to discover must-gather location
    - **Download and extract must-gather if not already present**
    - **Always write/update build_info.json with PR link, commit link, execution date**
@@ -111,7 +111,7 @@ references the oldest build on the current page.
 ### Incremental Downloads
 The tool skips downloading individual artifacts that already exist:
 - `junit_operator.xml`: Skipped if file exists
-- `junit/`: Skipped if directory exists
+- `build-logs/`: Skipped if directory exists
 - `must-gather/`: Skipped if directory exists
 - `hypershift-dumps/`: Skipped if directory exists
 
@@ -133,8 +133,8 @@ Each build directory contains `build_info.json` with:
 | Network error | Retry 3x with backoff, then fail |
 | allBuilds not in HTML | Exit with error (page structure changed) |
 | junit_operator.xml 404 | Warn, continue |
-| junit_operator.xml unparseable | Warn, skip per-step junit download |
-| Per-step junit 404 | Info log (expected), continue |
+| junit_operator.xml unparseable | Warn, skip failed step artifact download |
+| build-log.txt 404 | Info log (expected), continue |
 | must-gather 404 | Info log (expected), continue |
 | Extraction fails | Warn, keep tar for inspection |
 | Fewer builds than requested | Warn with counts, continue |
