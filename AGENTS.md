@@ -27,10 +27,11 @@ src/dredge/
 4. For each build:
    - Convert SpyglassLink to GCS path (strip "/view/gs/" prefix)
    - **Download junit_operator.xml if not already present**
-   - **Parse junit_operator.xml for failed steps, download build-log.txt and junit XML for each**
-   - List artifacts directory to discover must-gather location
-   - **Download and extract must-gather if not already present**
-   - **Always write/update build_info.json with PR link, commit link, execution date**
+   - **Fetch and save ci-operator-step-graph.json if not already present**
+   - **Build step hierarchy from junit + step graph; write build_info.json (with steps)**
+   - **Download build-log.txt and junit XML for failed steps (from hierarchy)**
+   - **Discover and download must-gather using step hierarchy (deterministic path)**
+   - **Discover and download hypershift dumps using step hierarchy**
 5. Follow "Older Runs" pagination link if more builds needed (history mode)
 
 ### Authentication
@@ -96,8 +97,9 @@ uv run dredge pr <github_pr_url>
 2. Handle 404 gracefully (some builds may not have the artifact)
 
 ### Changing must-gather discovery
-The `artifacts.discover_must_gather()` function uses the step graph to find
-gather-must-gather steps, then checks for `must-gather.tar` in their artifacts.
+The `artifacts.discover_must_gather()` function uses the step hierarchy (built
+from junit + step graph) to find `gather-must-gather` inner steps, then returns
+a deterministic GCS path without HTTP directory listing.
 
 ### Pagination
 `prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
@@ -111,12 +113,14 @@ references the oldest build on the current page.
 ### Incremental Downloads
 The tool skips downloading individual artifacts that already exist:
 - `junit_operator.xml`: Skipped if file exists
+- `ci-operator-step-graph.json`: Skipped if file exists (parsed from cache)
 - `build-logs/`: Skipped if directory exists
 - `must-gather/`: Skipped if directory exists
 - `hypershift-dumps/`: Skipped if directory exists
 
-The `build_info.json` metadata file is always updated. To force re-download
-of an artifact, delete that specific file or directory.
+The `build_info.json` metadata file is always updated (including the `steps`
+hierarchy). To force re-download of an artifact, delete that specific file
+or directory.
 
 ### Build Metadata
 Each build directory contains `build_info.json` with:
@@ -125,6 +129,9 @@ Each build directory contains `build_info.json` with:
 - `prow_job_link`: Link to the Prow job page (Spyglass view)
 - `pr_link`: GitHub PR URL (if PR job)
 - `commit_link`: GitHub commit URL being tested
+- `steps`: Hierarchical step structure keyed by test name, each with:
+  - `failed`, `started_at`, `finished_at`, `duration_seconds`, `dependencies`
+  - `inner_steps`: dict of inner step names to `{failed: bool}`
 
 ## Error Handling
 
