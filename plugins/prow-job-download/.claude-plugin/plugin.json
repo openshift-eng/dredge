@@ -1,0 +1,7 @@
+{
+  "name": "prow-job-download",
+  "description": "Download and analyze Prow CI job logs using the dredge tool",
+  "repository": "https://github.com/openshift-cloud-team/dredge",
+  "license": "GPL-3.0-only",
+  "keywords": ["prow", "ci", "openshift", "dredge"]
+}
