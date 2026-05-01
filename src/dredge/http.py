@@ -1,6 +1,9 @@
 import logging
 import re
 import time
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -11,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class NotFoundError(Exception):
-    def __init__(self, url):
+    def __init__(self, url: str) -> None:
         self.url = url
         super().__init__(f"Not found (404): {url}")
 
@@ -19,14 +22,14 @@ _session = None
 _auth_failed_domains = set()
 
 
-def _get_session():
+def _get_session() -> requests.Session:
     global _session
     if _session is None:
         _session = requests.Session()
     return _session
 
 
-def session_get(url, **kwargs):
+def session_get(url: str, **kwargs: Any) -> requests.Response:
     session = _get_session()
     response = session.get(url, **kwargs)
 
@@ -41,7 +44,7 @@ def session_get(url, **kwargs):
     return response
 
 
-def _request_with_retry(request_fn, retries=3, backoff=2):
+def _request_with_retry(request_fn: Callable[[], requests.Response], retries: int = 3, backoff: int = 2) -> requests.Response:
     """Call request_fn() with retry and exponential backoff. Returns response."""
     for attempt in range(retries):
         try:
@@ -55,7 +58,7 @@ def _request_with_retry(request_fn, retries=3, backoff=2):
                 raise
 
 
-def fetch_page(url, retries=3, backoff=2):
+def fetch_page(url: str, retries: int = 3, backoff: int = 2) -> str:
     """HTTP GET with retries and exponential backoff."""
     logger.info(f"Fetching: {url}")
     response = _request_with_retry(
@@ -65,7 +68,7 @@ def fetch_page(url, retries=3, backoff=2):
     return response.text
 
 
-def download_artifact(url, dest, retries=3, backoff=2):
+def download_artifact(url: str, dest: Path, retries: int = 3, backoff: int = 2) -> None:
     """Stream download artifact to destination.
     Raises NotFoundError on 404. Raises requests.RequestException on network errors.
     """
@@ -85,7 +88,7 @@ def download_artifact(url, dest, retries=3, backoff=2):
     logger.info(f"Downloaded to: {dest}")
 
 
-def list_gcsweb_dir(url):
+def list_gcsweb_dir(url: str) -> tuple[list[str], list[str]]:
     """List entries from a gcsweb directory listing.
     Returns (subdirs, files) tuple. Returns ([], []) for 404.
     Raises requests.RequestException on network errors.

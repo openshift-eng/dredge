@@ -4,6 +4,7 @@ import logging
 import re
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -16,7 +17,7 @@ from . import prow
 logger = logging.getLogger(__name__)
 
 
-def setup_logging():
+def setup_logging() -> None:
     """Configure timestamped logging."""
     logging.basicConfig(
         level=logging.INFO,
@@ -25,7 +26,7 @@ def setup_logging():
     )
 
 
-def parse_args():
+def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         description="Download artifacts from Prow CI jobs",
@@ -116,13 +117,13 @@ def parse_args():
     return parser.parse_args()
 
 
-def _resolve_auto_flags(args):
+def _resolve_auto_flags(args: argparse.Namespace) -> tuple[bool, bool]:
     auto_must_gather = args.auto_must_gather or args.auto
     auto_hypershift = args.auto_hypershift or args.auto
     return auto_must_gather, auto_hypershift
 
 
-def _load_build_info(build_dir):
+def _load_build_info(build_dir: Path) -> dict[str, Any]:
     """Load and validate build_info.json from a build directory."""
     build_info_path = build_dir / "build_info.json"
     if not build_info_path.exists():
@@ -148,7 +149,7 @@ def _load_build_info(build_dir):
     return info
 
 
-def cmd_pr(args, output_dir):
+def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'pr' subcommand."""
     match = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", args.pr_url)
     if not match:
@@ -198,7 +199,7 @@ def cmd_pr(args, output_dir):
     logger.info("Done")
 
 
-def cmd_history(args, output_dir):
+def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'history' subcommand."""
     parsed = urlparse(args.url)
     if not parsed.scheme or not parsed.netloc:
@@ -245,7 +246,7 @@ def cmd_history(args, output_dir):
     logger.info("Done")
 
 
-def cmd_urls(args, output_dir):
+def cmd_urls(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'urls' subcommand."""
     logger.info(f"Downloading {len(args.urls)} builds by URL")
     logger.info(f"Output directory: {output_dir.absolute()}")
@@ -275,7 +276,7 @@ def cmd_urls(args, output_dir):
     logger.info("Done")
 
 
-def cmd_must_gather(args, output_dir):
+def cmd_must_gather(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'must-gather' subcommand."""
     build_dir = Path(args.build_dir)
     if not build_dir.is_dir():
@@ -294,7 +295,7 @@ def cmd_must_gather(args, output_dir):
         sys.exit(1)
 
 
-def cmd_hypershift_dump(args, output_dir):
+def cmd_hypershift_dump(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'hypershift-dump' subcommand."""
     build_dir = Path(args.build_dir)
     if not build_dir.is_dir():
@@ -313,7 +314,7 @@ def cmd_hypershift_dump(args, output_dir):
         sys.exit(1)
 
 
-def main():
+def main() -> None:
     setup_logging()
     args = parse_args()
 

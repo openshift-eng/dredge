@@ -10,7 +10,7 @@ class TokenError(Exception):
     pass
 
 
-def get_github_token():
+def get_github_token() -> str:
     """Get GitHub token from gh CLI. Raises TokenError if unavailable."""
     try:
         return subprocess.check_output(
@@ -22,7 +22,7 @@ def get_github_token():
         raise TokenError("gh CLI not logged in; run 'gh auth login'")
 
 
-def fetch_failed_pr_jobs(owner, repo, pr_number, token=None):
+def fetch_failed_pr_jobs(owner: str, repo: str, pr_number: str, token: str | None = None) -> list[str]:
     """Fetch failed prow job URLs for a GitHub PR using the commit statuses API."""
     headers = {"Accept": "application/vnd.github+json"}
     if token:

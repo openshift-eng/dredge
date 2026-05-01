@@ -2,6 +2,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -20,7 +21,7 @@ class Build:
     commit_link: str | None = None
 
     @classmethod
-    def from_prow_json(cls, d: dict) -> "Build":
+    def from_prow_json(cls, d: dict[str, Any]) -> "Build":
         refs = d.get("Refs") or {}
         pulls = refs.get("pulls", [])
         pull = pulls[0] if pulls else {}
@@ -36,7 +37,7 @@ class Build:
 _gcsweb_base_cache = {}
 
 
-def extract_builds(html):
+def extract_builds(html: str) -> list[dict[str, Any]]:
     """Extract allBuilds JSON from job history page HTML."""
     pattern = r"var\s+allBuilds\s*=\s*(\[.*?\]);"
     match = re.search(pattern, html, re.DOTALL)
@@ -51,7 +52,7 @@ def extract_builds(html):
         raise ValueError(f"Failed to parse allBuilds JSON: {e}") from e
 
 
-def filter_builds(builds, failure=False, success=False):
+def filter_builds(builds: list[dict[str, Any]], failure: bool = False, success: bool = False) -> list[dict[str, Any]]:
     """
     Filter builds by result.
 
@@ -74,7 +75,7 @@ def filter_builds(builds, failure=False, success=False):
     return filtered
 
 
-def get_next_page_url(html, current_url):
+def get_next_page_url(html: str, current_url: str) -> str | None:
     """Find 'Older Runs' pagination link."""
     pattern = r'<a\s+href="([^"]+)"[^>]*>[^<]*Older\s+Runs[^<]*</a>'
     match = re.search(pattern, html, re.IGNORECASE)
@@ -86,7 +87,7 @@ def get_next_page_url(html, current_url):
     return None
 
 
-def spyglass_to_gcs_path(spyglass_link):
+def spyglass_to_gcs_path(spyglass_link: str) -> str:
     """Convert SpyglassLink to GCS path by stripping '/view/gs/' prefix."""
     prefix = "/view/gs/"
     if spyglass_link.startswith(prefix):
@@ -98,7 +99,7 @@ def spyglass_to_gcs_path(spyglass_link):
     return spyglass_link
 
 
-def discover_gcsweb_base(prow_base_url, spyglass_link):
+def discover_gcsweb_base(prow_base_url: str, spyglass_link: str) -> str:
     """
     Discover the gcsweb base URL by fetching the Spyglass page and extracting
     artifact links. Caches the result per prow instance.
@@ -127,7 +128,7 @@ def discover_gcsweb_base(prow_base_url, spyglass_link):
     return gcsweb_base
 
 
-def parse_spyglass_url(url):
+def parse_spyglass_url(url: str) -> tuple[str, str]:
     """
     Parse a Spyglass URL into build ID and SpyglassLink path.
 
@@ -140,7 +141,7 @@ def parse_spyglass_url(url):
     return build_id, path
 
 
-def collect_builds(start_url, count, failure=False, success=False):
+def collect_builds(start_url: str, count: int, failure: bool = False, success: bool = False) -> list[dict[str, Any]]:
     """Paginate through job history to collect N builds matching filters."""
     builds_collected = []
     current_url = start_url

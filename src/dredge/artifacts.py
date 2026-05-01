@@ -3,6 +3,8 @@ import logging
 import re
 import tarfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -76,7 +78,7 @@ Look for errors in `must-gather/*/logs/` and check operator status in
 """
 
 
-def fetch_step_graph(gcs_path, gcsweb_base, dest):
+def fetch_step_graph(gcs_path: str, gcsweb_base: str, dest: Path) -> list[dict[str, Any]]:
     """Download and parse ci-operator-step-graph.json.
     Saves the raw JSON to dest. Returns parsed list of step dicts.
     Raises http.NotFoundError, requests.RequestException, or json.JSONDecodeError.
@@ -99,7 +101,7 @@ def fetch_step_graph(gcs_path, gcsweb_base, dest):
     return parsed
 
 
-def parse_junit_operator_steps(junit_path):
+def parse_junit_operator_steps(junit_path: Path) -> dict[str, dict[str, dict[str, bool]]]:
     """
     Parse junit_operator.xml to extract all multi-stage test steps.
     Returns nested dict: {test_name: {inner_step: {"failed": bool}, ...}, ...}
@@ -127,7 +129,7 @@ def parse_junit_operator_steps(junit_path):
     return steps
 
 
-def build_step_hierarchy(junit_steps, step_graph):
+def build_step_hierarchy(junit_steps: dict[str, dict[str, dict[str, bool]]], step_graph: list[dict[str, Any]] | None) -> dict[str, Any]:
     """
     Combine step graph metadata with junit inner steps into a hierarchical structure.
 
@@ -170,7 +172,7 @@ def build_step_hierarchy(junit_steps, step_graph):
     return result
 
 
-def download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir):
+def download_failed_step_artifacts(gcs_path: str, gcsweb_base: str, failures: list[tuple[str, str]], logs_dir: Path) -> int:
     """
     Download build-log.txt and any junit XML files for each failed step.
 
@@ -221,7 +223,7 @@ def download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir):
     return total
 
 
-def discover_must_gather(gcs_path, steps):
+def discover_must_gather(gcs_path: str, steps: dict[str, Any]) -> str:
     """
     Find must-gather.tar using step hierarchy.
     Returns the full GCS path to must-gather.tar.
@@ -239,7 +241,7 @@ def discover_must_gather(gcs_path, steps):
     raise ArtifactError("No must-gather found in any test step")
 
 
-def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
+def discover_hypershift_dumps(gcs_path: str, gcsweb_base: str, steps: dict[str, Any]) -> list[tuple[str, str]]:
     """
     Find hostedcluster.tar files from steps running the HyperShift test binary.
     Uses step hierarchy to identify relevant steps via [input:hypershift-tests]
@@ -283,7 +285,7 @@ def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
     return results
 
 
-def extract_tgz(tar_path, dest_dir):
+def extract_tgz(tar_path: Path, dest_dir: Path) -> None:
     """Extract tar (gzip compressed) archive.
     Raises tarfile.TarError or OSError on extraction failure.
     On failure, the tar file is kept for inspection (unlink only runs on success).
@@ -302,7 +304,7 @@ def extract_tgz(tar_path, dest_dir):
     tar_path.unlink()
 
 
-def download_must_gather(build_dir, gcs_path, gcsweb_base, steps, step_name=None):
+def download_must_gather(build_dir: Path, gcs_path: str, gcsweb_base: str, steps: dict[str, Any], step_name: str | None = None) -> None:
     """Download and extract must-gather. No-op if already exists.
     Raises ArtifactError if must-gather cannot be found, downloaded, or extracted.
     """
@@ -329,7 +331,7 @@ def download_must_gather(build_dir, gcs_path, gcsweb_base, steps, step_name=None
         raise ArtifactError(f"Failed to extract must-gather: {e}") from e
 
 
-def download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, step_name=None):
+def download_hypershift_dumps(build_dir: Path, gcs_path: str, gcsweb_base: str, steps: dict[str, Any], step_name: str | None = None) -> None:
     """Download and extract hypershift dumps. No-op if already exists.
     Raises ArtifactError if no dumps can be found.
     """
@@ -365,7 +367,7 @@ def download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, step_name
             logger.warning(f"Failed to extract {test_name} dump: {e}")
 
 
-def write_agents_md(output_dir):
+def write_agents_md(output_dir: Path) -> None:
     """
     Write AGENTS.md to the output directory for AI agent context.
     Only overwrites if the existing file was created by this tool.
@@ -387,8 +389,8 @@ def write_agents_md(output_dir):
     logger.info(f"Wrote AGENTS.md to: {agents_md_path}")
 
 
-def write_build_metadata(build, build_dir, prow_base_url, steps=None,
-                         gcs_path=None, gcsweb_base=None):
+def write_build_metadata(build: prow.Build, build_dir: Path, prow_base_url: str, steps: dict[str, Any] | None = None,
+                         gcs_path: str | None = None, gcsweb_base: str | None = None) -> None:
     """Write metadata JSON file for a build."""
     metadata = {
         "build_id": build.id,
@@ -409,8 +411,8 @@ def write_build_metadata(build, build_dir, prow_base_url, steps=None,
     logger.info(f"Wrote metadata to: {metadata_path}")
 
 
-def process_build(build, output_dir, prow_base_url,
-                  auto_must_gather=False, auto_hypershift=False):
+def process_build(build: prow.Build, output_dir: Path, prow_base_url: str,
+                  auto_must_gather: bool = False, auto_hypershift: bool = False) -> None:
     """Download artifacts for one build."""
     build_id = build.id
     build_dir = output_dir / str(build_id)
