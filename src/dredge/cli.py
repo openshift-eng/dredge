@@ -158,8 +158,10 @@ def cmd_pr(args, output_dir):
     owner, repo, pr_number = match.group(1), match.group(2), match.group(3)
     logger.info(f"Fetching failed jobs for {owner}/{repo}#{pr_number}")
 
-    token = github.get_github_token()
-    if not token:
+    try:
+        token = github.get_github_token()
+    except github.TokenError:
+        token = None
         logger.warning("No GitHub token found (gh CLI not available or not logged in). "
                         "Using unauthenticated requests (rate-limited).")
 
@@ -189,7 +191,10 @@ def cmd_pr(args, output_dir):
         artifacts.process_build(build, output_dir, prow_base_url,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
-    artifacts.write_agents_md(output_dir)
+    try:
+        artifacts.write_agents_md(output_dir)
+    except OSError as e:
+        logger.warning(f"Failed to write AGENTS.md: {e}")
     logger.info("Done")
 
 
@@ -232,7 +237,10 @@ def cmd_history(args, output_dir):
         artifacts.process_build(build, output_dir, prow_base_url,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
-    artifacts.write_agents_md(output_dir)
+    try:
+        artifacts.write_agents_md(output_dir)
+    except OSError as e:
+        logger.warning(f"Failed to write AGENTS.md: {e}")
 
     logger.info("Done")
 
@@ -259,7 +267,10 @@ def cmd_urls(args, output_dir):
         artifacts.process_build(build, output_dir, prow_base_url,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
-    artifacts.write_agents_md(output_dir)
+    try:
+        artifacts.write_agents_md(output_dir)
+    except OSError as e:
+        logger.warning(f"Failed to write AGENTS.md: {e}")
 
     logger.info("Done")
 

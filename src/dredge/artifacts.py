@@ -78,7 +78,8 @@ Look for errors in `must-gather/*/logs/` and check operator status in
 
 def fetch_step_graph(gcs_path, gcsweb_base, dest):
     """Download and parse ci-operator-step-graph.json.
-    Saves the raw JSON to dest. Returns parsed list of step dicts, or None.
+    Saves the raw JSON to dest. Returns parsed list of step dicts.
+    Raises http.NotFoundError, requests.RequestException, or json.JSONDecodeError.
     """
     if dest.exists():
         try:
@@ -87,23 +88,15 @@ def fetch_step_graph(gcs_path, gcsweb_base, dest):
             logger.warning(f"Failed to read cached step graph: {e}")
 
     url = f"{gcsweb_base}{gcs_path}/artifacts/ci-operator-step-graph.json"
-    try:
-        logger.info(f"Fetching step graph: {url}")
-        response = http.session_get(url, timeout=30)
-        if response.status_code == 404:
-            logger.error("Step graph not found (404)")
-            return None
-        response.raise_for_status()
-        parsed = json.loads(response.text)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(response.text)
-        return parsed
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch step graph: {e}")
-        return None
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse step graph JSON: {e}")
-        return None
+    logger.info(f"Fetching step graph: {url}")
+    response = http.session_get(url, timeout=30)
+    if response.status_code == 404:
+        raise http.NotFoundError(url)
+    response.raise_for_status()
+    parsed = json.loads(response.text)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(response.text)
+    return parsed
 
 
 def parse_junit_operator_steps(junit_path):
@@ -116,11 +109,7 @@ def parse_junit_operator_steps(junit_path):
 
     The artifact directory uses inner_step (prefix stripped), not the full step name.
     """
-    try:
-        tree = ET.parse(junit_path)
-    except (ET.ParseError, OSError) as e:
-        logger.warning(f"Failed to parse {junit_path}: {e}")
-        return {}
+    tree = ET.parse(junit_path)
 
     steps = {}
 
@@ -195,22 +184,37 @@ def download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir):
         dest_dir = logs_dir / full_step_name
 
         build_log_url = f"{gcsweb_base}{step_base}/build-log.txt"
-        if http.download_artifact(build_log_url, dest_dir / "build-log.txt"):
+        try:
+            http.download_artifact(build_log_url, dest_dir / "build-log.txt")
             total += 1
+        except (http.NotFoundError, requests.RequestException):
+            pass
 
         artifacts_base = f"{step_base}/artifacts"
 
-        junit_subdir_url = f"{gcsweb_base}{artifacts_base}/junit/"
-        _, files = http.list_gcsweb_dir(junit_subdir_url)
-        for filename in [f for f in files if f.endswith(".xml")]:
-            if http.download_artifact(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename):
-                total += 1
+        try:
+            junit_subdir_url = f"{gcsweb_base}{artifacts_base}/junit/"
+            _, files = http.list_gcsweb_dir(junit_subdir_url)
+            for filename in [f for f in files if f.endswith(".xml")]:
+                try:
+                    http.download_artifact(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename)
+                    total += 1
+                except (http.NotFoundError, requests.RequestException):
+                    pass
+        except requests.RequestException as e:
+            logger.warning(f"Failed to list junit dir for {full_step_name}: {e}")
 
-        artifacts_url = f"{gcsweb_base}{artifacts_base}/"
-        _, root_files = http.list_gcsweb_dir(artifacts_url)
-        for filename in [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]:
-            if http.download_artifact(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename):
-                total += 1
+        try:
+            artifacts_url = f"{gcsweb_base}{artifacts_base}/"
+            _, root_files = http.list_gcsweb_dir(artifacts_url)
+            for filename in [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]:
+                try:
+                    http.download_artifact(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename)
+                    total += 1
+                except (http.NotFoundError, requests.RequestException):
+                    pass
+        except requests.RequestException as e:
+            logger.warning(f"Failed to list artifacts dir for {full_step_name}: {e}")
 
         logger.info(f"Downloaded artifacts for failed step {full_step_name}")
 
@@ -220,7 +224,8 @@ def download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir):
 def discover_must_gather(gcs_path, steps):
     """
     Find must-gather.tar using step hierarchy.
-    Returns the full GCS path to must-gather.tar if found, None otherwise.
+    Returns the full GCS path to must-gather.tar.
+    Raises ArtifactError if no must-gather step is found.
     """
     for test_name, step_info in steps.items():
         inner_steps = step_info.get("inner_steps", {})
@@ -231,8 +236,7 @@ def discover_must_gather(gcs_path, steps):
         logger.info(f"Must-gather candidate: {test_name}/gather-must-gather/artifacts/must-gather.tar")
         return full_path
 
-    logger.info("No must-gather found in any test step")
-    return None
+    raise ArtifactError("No must-gather found in any test step")
 
 
 def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
@@ -240,7 +244,8 @@ def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
     Find hostedcluster.tar files from steps running the HyperShift test binary.
     Uses step hierarchy to identify relevant steps via [input:hypershift-tests]
     dependency, and inner step names to avoid directory listing where possible.
-    Returns list of (test_dir_name, gcs_tar_path) tuples, or empty list.
+    Returns list of (test_dir_name, gcs_tar_path) tuples.
+    Raises ArtifactError if no hypershift test steps or dumps are found.
     """
     hypershift_tests = {
         name: info for name, info in steps.items()
@@ -248,7 +253,7 @@ def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
     }
 
     if not hypershift_tests:
-        return []
+        raise ArtifactError("No HyperShift test steps found in build")
 
     logger.info(f"Found HyperShift test steps: {list(hypershift_tests)}")
     results = []
@@ -272,33 +277,34 @@ def discover_hypershift_dumps(gcs_path, gcsweb_base, steps):
                     results.append((test_dir, tar_path))
                     logger.info(f"Found hostedcluster dump: {test_name}/{inner_step}/artifacts/{test_dir}/hostedcluster.tar")
 
+    if not results:
+        raise ArtifactError("No hypershift dumps found in HyperShift test steps")
+
     return results
 
 
 def extract_tgz(tar_path, dest_dir):
-    """Extract tar (gzip compressed) archive."""
+    """Extract tar (gzip compressed) archive.
+    Raises tarfile.TarError or OSError on extraction failure.
+    On failure, the tar file is kept for inspection (unlink only runs on success).
+    """
+    logger.info(f"Extracting: {tar_path} to {dest_dir}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
     try:
-        logger.info(f"Extracting: {tar_path} to {dest_dir}")
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(tar_path, "r:gz") as tar:
+            tar.extractall(path=dest_dir)
+    except tarfile.ReadError:
+        with tarfile.open(tar_path, "r:") as tar:
+            tar.extractall(path=dest_dir)
 
-        try:
-            with tarfile.open(tar_path, "r:gz") as tar:
-                tar.extractall(path=dest_dir)
-        except tarfile.ReadError:
-            with tarfile.open(tar_path, "r:") as tar:
-                tar.extractall(path=dest_dir)
-
-        logger.info(f"Extracted successfully to: {dest_dir}")
-        tar_path.unlink()
-        return True
-    except (tarfile.TarError, OSError) as e:
-        logger.warning(f"Extraction failed: {e}. Keeping tar file for inspection.")
-        return False
+    logger.info(f"Extracted successfully to: {dest_dir}")
+    tar_path.unlink()
 
 
 def download_must_gather(build_dir, gcs_path, gcsweb_base, steps, step_name=None):
     """Download and extract must-gather. No-op if already exists.
-    Raises ArtifactError if must-gather cannot be found or downloaded.
+    Raises ArtifactError if must-gather cannot be found, downloaded, or extracted.
     """
     extract_dir = build_dir / "must-gather"
     if extract_dir.exists():
@@ -310,15 +316,17 @@ def download_must_gather(build_dir, gcs_path, gcsweb_base, steps, step_name=None
     else:
         must_gather_gcs_path = discover_must_gather(gcs_path, steps)
 
-    if not must_gather_gcs_path:
-        raise ArtifactError("Could not find must-gather in any step")
-
     must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
     tar_dest = build_dir / "must-gather.tar"
-    if not http.download_artifact(must_gather_url, tar_dest):
-        raise ArtifactError("Failed to download must-gather")
+    try:
+        http.download_artifact(must_gather_url, tar_dest)
+    except (http.NotFoundError, requests.RequestException) as e:
+        raise ArtifactError(f"Failed to download must-gather: {e}") from e
 
-    extract_tgz(tar_dest, extract_dir)
+    try:
+        extract_tgz(tar_dest, extract_dir)
+    except (tarfile.TarError, OSError) as e:
+        raise ArtifactError(f"Failed to extract must-gather: {e}") from e
 
 
 def download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, step_name=None):
@@ -341,45 +349,42 @@ def download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, step_name
         raise ArtifactError("No step data available for hypershift dump discovery")
 
     dumps = discover_hypershift_dumps(gcs_path, gcsweb_base, filtered_steps)
-    if not dumps:
-        raise ArtifactError("No hypershift dumps found")
 
     for test_name, tar_gcs_path in dumps:
         tar_url = f"{gcsweb_base}{tar_gcs_path}"
         tar_dest = build_dir / "hostedcluster.tar"
         extract_dest = hypershift_dir / test_name
-        if http.download_artifact(tar_url, tar_dest):
+        try:
+            http.download_artifact(tar_url, tar_dest)
+        except (http.NotFoundError, requests.RequestException) as e:
+            logger.warning(f"Failed to download {test_name} dump: {e}")
+            continue
+        try:
             extract_tgz(tar_dest, extract_dest)
+        except (tarfile.TarError, OSError) as e:
+            logger.warning(f"Failed to extract {test_name} dump: {e}")
 
 
 def write_agents_md(output_dir):
     """
     Write AGENTS.md to the output directory for AI agent context.
     Only overwrites if the existing file was created by this tool.
+    Raises OSError on file read/write failures.
     """
     agents_md_path = output_dir / "AGENTS.md"
 
     if agents_md_path.exists():
-        try:
-            existing_content = agents_md_path.read_text()
-            if _AGENTS_MD_SIGNATURE not in existing_content:
-                logger.warning(
-                    f"AGENTS.md already exists at {agents_md_path} and was not created by this tool. "
-                    "Skipping to avoid overwriting user content."
-                )
-                return False
-        except OSError as e:
-            logger.warning(f"Could not read existing AGENTS.md: {e}")
-            return False
+        existing_content = agents_md_path.read_text()
+        if _AGENTS_MD_SIGNATURE not in existing_content:
+            logger.warning(
+                f"AGENTS.md already exists at {agents_md_path} and was not created by this tool. "
+                "Skipping to avoid overwriting user content."
+            )
+            return
 
-    try:
-        content = _AGENTS_MD_CONTENT.format(signature=_AGENTS_MD_SIGNATURE)
-        agents_md_path.write_text(content)
-        logger.info(f"Wrote AGENTS.md to: {agents_md_path}")
-        return True
-    except OSError as e:
-        logger.warning(f"Failed to write AGENTS.md: {e}")
-        return False
+    content = _AGENTS_MD_CONTENT.format(signature=_AGENTS_MD_SIGNATURE)
+    agents_md_path.write_text(content)
+    logger.info(f"Wrote AGENTS.md to: {agents_md_path}")
 
 
 def write_build_metadata(build, build_dir, prow_base_url, steps=None,
@@ -421,9 +426,10 @@ def process_build(build, output_dir, prow_base_url,
     gcs_path = prow.spyglass_to_gcs_path(spyglass_link)
     build_dir.mkdir(parents=True, exist_ok=True)
 
-    gcsweb_base = prow.discover_gcsweb_base(prow_base_url, spyglass_link)
-    if not gcsweb_base:
-        logger.warning(f"Build {build_id}: Could not discover gcsweb URL, skipping artifact downloads")
+    try:
+        gcsweb_base = prow.discover_gcsweb_base(prow_base_url, spyglass_link)
+    except (requests.RequestException, ValueError) as e:
+        logger.warning(f"Build {build_id}: Could not discover gcsweb URL ({e}), skipping artifact downloads")
         write_build_metadata(build, build_dir, prow_base_url, gcs_path=gcs_path)
         return
 
@@ -433,17 +439,26 @@ def process_build(build, output_dir, prow_base_url,
         logger.info(f"Build {build_id}: junit_operator.xml already exists, skipping download")
     else:
         junit_url = f"{gcsweb_base}{gcs_path}/artifacts/junit_operator.xml"
-        if not http.download_artifact(junit_url, junit_dest):
-            logger.warning(f"Build {build_id}: junit_operator.xml not available")
+        try:
+            http.download_artifact(junit_url, junit_dest)
+        except (http.NotFoundError, requests.RequestException) as e:
+            logger.warning(f"Build {build_id}: junit_operator.xml not available: {e}")
 
     # Fetch step graph (saved as artifact)
     step_graph_dest = build_dir / "ci-operator-step-graph.json"
-    step_graph = fetch_step_graph(gcs_path, gcsweb_base, step_graph_dest)
+    try:
+        step_graph = fetch_step_graph(gcs_path, gcsweb_base, step_graph_dest)
+    except (http.NotFoundError, requests.RequestException, json.JSONDecodeError) as e:
+        logger.warning(f"Build {build_id}: step graph unavailable: {e}")
+        step_graph = None
 
     # Build step hierarchy from junit + step graph
     junit_steps = {}
     if junit_dest.exists():
-        junit_steps = parse_junit_operator_steps(junit_dest)
+        try:
+            junit_steps = parse_junit_operator_steps(junit_dest)
+        except (ET.ParseError, OSError) as e:
+            logger.warning(f"Build {build_id}: failed to parse junit_operator.xml: {e}")
     steps = build_step_hierarchy(junit_steps, step_graph)
 
     # Write build_info.json with step hierarchy

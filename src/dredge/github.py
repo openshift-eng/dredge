@@ -1,22 +1,25 @@
 import logging
 import subprocess
 
-import requests
-
 from . import http
 
 logger = logging.getLogger(__name__)
 
 
+class TokenError(Exception):
+    pass
+
+
 def get_github_token():
-    """Get GitHub token from gh CLI. Returns None if unavailable."""
+    """Get GitHub token from gh CLI. Raises TokenError if unavailable."""
     try:
-        token = subprocess.check_output(
+        return subprocess.check_output(
             ["gh", "auth", "token"], stderr=subprocess.DEVNULL, text=True
         ).strip()
-        return token
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
+    except FileNotFoundError:
+        raise TokenError("gh CLI not found; install GitHub CLI to authenticate")
+    except subprocess.CalledProcessError:
+        raise TokenError("gh CLI not logged in; run 'gh auth login'")
 
 
 def fetch_failed_pr_jobs(owner, repo, pr_number, token=None):

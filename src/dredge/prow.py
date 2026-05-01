@@ -103,32 +103,28 @@ def discover_gcsweb_base(prow_base_url, spyglass_link):
     Discover the gcsweb base URL by fetching the Spyglass page and extracting
     artifact links. Caches the result per prow instance.
 
-    Returns the gcsweb base URL (e.g., "https://gcsweb.example.com/gcs/") or None.
+    Raises requests.RequestException on network errors.
+    Raises ValueError when gcsweb pattern not found in HTML.
     """
     if prow_base_url in _gcsweb_base_cache:
         return _gcsweb_base_cache[prow_base_url]
 
     spyglass_url = f"{prow_base_url}{spyglass_link}"
-    try:
-        logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
-        response = http.session_get(spyglass_url, timeout=30)
-        response.raise_for_status()
-        html = response.text
-    except requests.RequestException as e:
-        logger.warning(f"Failed to fetch Spyglass page for gcsweb discovery: {e}")
-        return None
+    logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
+    response = http.session_get(spyglass_url, timeout=30)
+    response.raise_for_status()
+    html = response.text
 
     gcsweb_pattern = r'(https?://[^"\s]+/gcs/)[^"\s]+'
     match = re.search(gcsweb_pattern, html)
 
-    if match:
-        gcsweb_base = match.group(1)
-        logger.info(f"Discovered gcsweb base URL: {gcsweb_base}")
-        _gcsweb_base_cache[prow_base_url] = gcsweb_base
-        return gcsweb_base
+    if not match:
+        raise ValueError("Could not discover gcsweb URL from Spyglass page")
 
-    logger.warning("Could not discover gcsweb URL from Spyglass page")
-    return None
+    gcsweb_base = match.group(1)
+    logger.info(f"Discovered gcsweb base URL: {gcsweb_base}")
+    _gcsweb_base_cache[prow_base_url] = gcsweb_base
+    return gcsweb_base
 
 
 def parse_spyglass_url(url):

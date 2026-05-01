@@ -9,6 +9,12 @@ from . import auth
 
 logger = logging.getLogger(__name__)
 
+
+class NotFoundError(Exception):
+    def __init__(self, url):
+        self.url = url
+        super().__init__(f"Not found (404): {url}")
+
 _session = None
 _auth_failed_domains = set()
 
@@ -60,19 +66,16 @@ def fetch_page(url, retries=3, backoff=2):
 
 
 def download_artifact(url, dest, retries=3, backoff=2):
-    """Stream download artifact to destination. Returns False on 404."""
+    """Stream download artifact to destination.
+    Raises NotFoundError on 404. Raises requests.RequestException on network errors.
+    """
     logger.info(f"Downloading: {url}")
-    try:
-        response = _request_with_retry(
-            lambda: session_get(url, stream=True, timeout=60), retries, backoff
-        )
-    except requests.RequestException as e:
-        logger.warning(f"Download failed after {retries} attempts: {e}")
-        return False
+    response = _request_with_retry(
+        lambda: session_get(url, stream=True, timeout=60), retries, backoff
+    )
 
     if response.status_code == 404:
-        logger.info(f"Artifact not found (404): {url}")
-        return False
+        raise NotFoundError(url)
     response.raise_for_status()
 
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -80,21 +83,18 @@ def download_artifact(url, dest, retries=3, backoff=2):
         for chunk in response.iter_content(chunk_size=8192):
             f.write(chunk)
     logger.info(f"Downloaded to: {dest}")
-    return True
 
 
 def list_gcsweb_dir(url):
     """List entries from a gcsweb directory listing.
-    Returns (subdirs, files) tuple of name lists, or ([], []) on error/404.
+    Returns (subdirs, files) tuple. Returns ([], []) for 404.
+    Raises requests.RequestException on network errors.
     """
-    try:
-        response = session_get(url, timeout=30)
-        if response.status_code == 404:
-            return [], []
-        response.raise_for_status()
-        html = response.text
-    except requests.RequestException:
+    response = session_get(url, timeout=30)
+    if response.status_code == 404:
         return [], []
+    response.raise_for_status()
+    html = response.text
 
     all_hrefs = re.findall(r'href="([^"]+)"', html)
 
