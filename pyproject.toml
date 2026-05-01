@@ -1,5 +1,5 @@
 [project]
-name = "ci-tools"
+name = "dredge"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = ["requests"]
@@ -8,7 +8,7 @@ dependencies = ["requests"]
 kerberos = ["gssapi"]
 
 [project.scripts]
-ci-tools = "ci_tools.cli:main"
+dredge = "dredge.cli:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,4 +1,4 @@
-# Prow Job Downloader
+# dredge — Prow Job Downloader
 
 ## Purpose
 Downloads artifacts from Prow CI jobs for analysis.
@@ -7,9 +7,9 @@ Downloads artifacts from Prow CI jobs for analysis.
 
 ```
 pyproject.toml              - Project metadata and dependencies (uv/hatch)
-src/ci_tools/
+src/dredge/
   __init__.py
-  __main__.py               - python -m ci_tools entry point
+  __main__.py               - python -m dredge entry point
   cli.py                    - CLI argument parsing, command handlers, main()
   http.py                   - HTTP primitives (fetch, download, directory listing, auth-aware session)
   auth.py                   - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
@@ -42,7 +42,7 @@ using an existing Kerberos ticket. No user interaction required.
 - **Auth chain**: follows HTTP 3xx redirects and scraped HTML redirects (forms, single-link pages)
 - **Kerberos**: SPNEGO authentication against `auth.redhat.com` only (via `gssapi` library)
 - **Trust boundary**: only follows redirects to trusted domains (`.openshiftapps.com`, `.openshift.org`, `.redhat.com` by default; extensible via `--trusted-redirect-domain`)
-- **Cookie cache**: `~/.config/ci-tools/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
+- **Cookie cache**: `~/.config/dredge/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
 - **Loop detection**: keyed on `(method, url, domain-scoped cookies)` — allows legitimate OAuth revisits where server-side state has changed
 
 ### Key URL Transformations
@@ -63,26 +63,26 @@ using an existing Kerberos ticket. No user interaction required.
 **history** - Download from job history page:
 ```bash
 # Download most recent N jobs (any result)
-uv run ci-tools history <url> <count>
+uv run dredge history <url> <count>
 
 # Download only failed jobs
-uv run ci-tools history <url> <count> --failure
+uv run dredge history <url> <count> --failure
 
 # Download only successful jobs
-uv run ci-tools history <url> <count> --success
+uv run dredge history <url> <count> --success
 
 # Download jobs matching either result (excludes PENDING, ABORTED, etc.)
-uv run ci-tools history <url> <count> --failure --success
+uv run dredge history <url> <count> --failure --success
 ```
 
 **urls** - Download specific builds by Spyglass URL:
 ```bash
-uv run ci-tools urls <url> [<url> ...]
+uv run dredge urls <url> [<url> ...]
 ```
 
 **pr** - Download failed prow jobs from a GitHub PR:
 ```bash
-uv run ci-tools pr <github_pr_url>
+uv run dredge pr <github_pr_url>
 ```
 
 ### Options
@@ -148,24 +148,24 @@ Each build directory contains `build_info.json` with:
 ## Testing
 ```bash
 # Verify help text
-uv run ci-tools --help
+uv run dredge --help
 
 # Test urls mode
-uv run ci-tools urls \
+uv run dredge urls \
     "https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-release-master-ci-4.22-e2e-azure-ovn-upgrade/2016123606924267520"
 
 # Test history mode - failures only
-uv run ci-tools history \
+uv run dredge history \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     2 --failure
 
 # With custom output directory
-uv run ci-tools -o ./artifacts history \
+uv run dredge -o ./artifacts history \
     "https://prow.ci.openshift.org/job-history/gs/test-platform-results/logs/JOB_NAME" \
     5
 
 # Authenticated Prow deck (requires kinit + gssapi)
-uv run ci-tools urls \
+uv run dredge urls \
     "https://qe-private-deck-ci.apps.ci.l2s4.p1.openshiftapps.com/view/gs/qe-private-deck/..."
 ```
 

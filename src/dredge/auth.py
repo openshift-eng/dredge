@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 MAX_AUTH_HOPS = 20
 KERBEROS_DOMAIN = "auth.redhat.com"
 DEFAULT_TRUSTED_DOMAINS = [".openshiftapps.com", ".openshift.org", ".redhat.com"]
-COOKIE_CACHE_DIR = Path.home() / ".config" / "ci-tools" / "cookies"
+COOKIE_CACHE_DIR = Path.home() / ".config" / "dredge" / "cookies"
 
 _trusted_domains = list(DEFAULT_TRUSTED_DOMAINS)
 
