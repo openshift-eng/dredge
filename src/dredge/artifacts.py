@@ -231,9 +231,8 @@ def discover_must_gather(gcs_path: str, steps: dict[str, Any]) -> str:
     """
     for test_name, step_info in steps.items():
         inner_steps = step_info.get("inner_steps", {})
-        if inner_steps:
-            if "gather-must-gather" not in inner_steps:
-                continue
+        if "gather-must-gather" not in inner_steps:
+            continue
         full_path = f"{gcs_path}/artifacts/{test_name}/gather-must-gather/artifacts/must-gather.tar"
         logger.info(f"Must-gather candidate: {test_name}/gather-must-gather/artifacts/must-gather.tar")
         return full_path
