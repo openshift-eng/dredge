@@ -14,6 +14,23 @@ Download Prow CI job logs with `dredge` and make them available for analysis.
 3. Run `dredge` to download logs
 4. Report what was downloaded
 
+## Resolving the target
+
+The user may not provide a URL directly. If they reference "this PR", "my PR", a PR number, or CI failures on the current branch, resolve it to a GitHub PR URL first:
+
+```bash
+# From a branch name
+gh pr list --head <branch> --json url --jq '.[0].url'
+
+# From a PR number
+gh pr view <number> --json url --jq '.url'
+
+# Current branch
+gh pr view --json url --jq '.url'
+```
+
+Then proceed with the resolved URL using the appropriate mode below.
+
 ## Determine mode
 
 | User input | Mode | Command |
