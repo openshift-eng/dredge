@@ -1,6 +1,6 @@
 ---
 name: prow-job-download
-description: Download Prow CI job logs using the dredge tool. Use when user asks to examine failing CI jobs, provides Prow URLs, mentions a PR's test failures, or asks about prow/CI logs. Handles PR jobs, specific Spyglass URLs, and job history pages.
+description: Download Prow artifacts for summarisation or deep analysis. Use when user asks to examine or summarise failing CI jobs, provides Prow URLs, mentions a PR's test failures, or asks about prow/CI logs. Handles PR jobs, specific Spyglass URLs, and job history pages.
 ---
 
 # Prow Job Download
