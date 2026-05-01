@@ -52,9 +52,17 @@ Each build directory contains `build_info.json` with step hierarchy and failure 
 
 List the build directories and summarize available artifacts for the calling agent.
 
-## On-demand artifact download
+## Cluster logs (must-gather / hypershift-dump)
 
-During analysis, if must-gather or hypershift logs are needed, fetch them from an already-downloaded build:
+When the user asks about cluster state, node conditions, operator health, pod status, events, resource errors, etcd, networking, storage, or any question that requires detail beyond what build-logs and junit provide, **you must download cluster logs before answering**. Do not attempt to answer cluster-level questions from build-log output alone.
+
+Pick the right command based on the job type:
+
+| Signal | Command |
+|---|---|
+| Standard OCP/OpenShift job (non-HyperShift) | `dredge must-gather <workdir>/<build_id>` |
+| HyperShift / hosted-cluster job | `dredge hypershift-dump <workdir>/<build_id>` |
+| Unsure | Run both; only the applicable one will produce output |
 
 ```bash
 # Must-gather (auto-detects the step)
@@ -64,7 +72,7 @@ dredge must-gather <workdir>/<build_id>
 dredge hypershift-dump <workdir>/<build_id>
 ```
 
-These commands use `build_info.json` metadata already present in the build directory.
+These commands use `build_info.json` metadata already present in the build directory. They download additional artifacts into the build directory and may take a moment to complete.
 
 ## Checklist
 
