@@ -1,0 +1,24 @@
+
+<!DOCTYPE html>
+<html lang="en" charset="utf-8">
+<head>
+  <title>Log In</title>
+</head>
+<body>
+  <div class="panel-login">
+    <div class="panel-content panel-content-centered">
+      <form method="GET" action="/oauth/start">
+        <input type="hidden" name="rd" value="/view/gs/example-bucket/pr-logs/pull/org_repo/123/job-name/456">
+
+        <button type="submit" class="btn btn-lg btn-primary">Log in with OpenShift</button>
+      </form>
+    </div>
+  </div>
+
+  <footer>
+
+      Secured with <a href="https://github.com/openshift/oauth-proxy#oauth2_proxy">OpenShift oauth-proxy</a>
+
+  </footer>
+</body>
+</html>

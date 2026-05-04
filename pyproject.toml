@@ -6,6 +6,7 @@ dependencies = ["requests"]
 
 [project.optional-dependencies]
 kerberos = ["gssapi"]
+dev = ["pytest", "responses"]
 
 [project.scripts]
 dredge = "dredge.cli:main"

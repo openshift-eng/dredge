@@ -46,6 +46,8 @@ using an existing Kerberos ticket. No user interaction required.
 - **Cookie cache**: `~/.config/dredge/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
 - **Loop detection**: keyed on `(method, url, domain-scoped cookies)` — allows legitimate OAuth revisits where server-side state has changed
 
+The concrete 14-step auth chain is documented in `src/dredge/fetch_url/_auth.py`.
+
 ### Key URL Transformations
 - SpyglassLink: `/view/gs/BUCKET/PATH` -> GCS path: `BUCKET/PATH`
 - Direct download: `https://storage.googleapis.com/{gcs_path}/...`
