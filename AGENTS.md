@@ -11,8 +11,10 @@ src/dredge/
   __init__.py
   __main__.py               - python -m dredge entry point
   cli.py                    - CLI argument parsing, command handlers, main()
-  http.py                   - HTTP primitives (fetch, download, directory listing, auth-aware session)
-  auth.py                   - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
+  fetch_url/                - HTTP fetching package (encapsulates requests library)
+    __init__.py             - Public API: fetch_url(), FetchError, NotFoundError
+    _auth.py                - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
+    _session.py             - requests.Session singleton, retry logic
   prow.py                   - Prow URL handling, build discovery, pagination
   artifacts.py              - Artifact discovery, download, extraction, build processing
   github.py                 - GitHub API integration (PR job fetching)
@@ -46,7 +48,7 @@ using an existing Kerberos ticket. No user interaction required.
 - **Cookie cache**: `~/.config/dredge/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
 - **Loop detection**: keyed on `(method, url, domain-scoped cookies)` — allows legitimate OAuth revisits where server-side state has changed
 
-The concrete 14-step auth chain is documented in `src/dredge/fetch_url/_auth.py`.
+The concrete 14-step auth chain is documented in a comment at the top of `src/dredge/fetch_url/_auth.py`.
 
 ### Key URL Transformations
 - SpyglassLink: `/view/gs/BUCKET/PATH` -> GCS path: `BUCKET/PATH`

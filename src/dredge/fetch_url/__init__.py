@@ -26,6 +26,7 @@ def fetch_url(url):
             raise NotFoundError(url)
         if response.status_code >= 400:
             raise FetchError(f"HTTP {response.status_code}: {url}")
+        response.raw.decode_content = True
         yield response.raw
     finally:
         response.close()

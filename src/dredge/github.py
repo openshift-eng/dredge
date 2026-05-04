@@ -1,7 +1,7 @@
 import logging
 import subprocess
 
-from . import http
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +30,14 @@ def fetch_failed_pr_jobs(owner: str, repo: str, pr_number: str, token: str | Non
 
     pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
     logger.info(f"Fetching PR info: {pr_url}")
-    response = http.session_get(pr_url, headers=headers, timeout=30)
+    response = requests.get(pr_url, headers=headers, timeout=30)
     response.raise_for_status()
     head_sha = response.json()["head"]["sha"]
     logger.info(f"PR head SHA: {head_sha}")
 
     status_url = f"https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/status"
     logger.info(f"Fetching commit statuses: {status_url}")
-    response = http.session_get(status_url, headers=headers, timeout=30)
+    response = requests.get(status_url, headers=headers, timeout=30)
     response.raise_for_status()
     statuses = response.json().get("statuses", [])
 

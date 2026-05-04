@@ -1,9 +1,12 @@
+import gzip
+import io
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
 import responses
+import urllib3
 
 from dredge.fetch_url import FetchError, NotFoundError, fetch_url
 
@@ -62,6 +65,22 @@ class TestFetchUrl:
         with pytest.raises(FetchError):
             with fetch_url("http://example.com/down") as body:
                 body.read()
+
+    def test_decodes_gzip_content_encoding(self):
+        compressed = gzip.compress(b"hello gzipped")
+        raw = urllib3.HTTPResponse(
+            body=io.BytesIO(compressed),
+            headers={"Content-Encoding": "gzip"},
+            preload_content=False,
+            decode_content=False,
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raw = raw
+
+        with patch("dredge.fetch_url._session.get", return_value=mock_response):
+            with fetch_url("http://example.com/gzipped") as body:
+                assert body.read() == b"hello gzipped"
 
     @responses.activate
     def test_stream_is_closed_after_context_exit(self):

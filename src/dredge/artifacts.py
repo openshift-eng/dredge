@@ -1,15 +1,14 @@
 import json
 import logging
 import re
+import shutil
 import tarfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
-import requests
-
-from . import http
 from . import prow
+from .fetch_url import fetch_url, FetchError, NotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -78,10 +77,39 @@ Look for errors in `must-gather/*/logs/` and check operator status in
 """
 
 
+def _download(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with fetch_url(url) as body:
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(body, f)
+    logger.info(f"Downloaded to: {dest}")
+
+
+def _list_gcsweb_dir(url: str) -> tuple[list[str], list[str]]:
+    try:
+        with fetch_url(url) as body:
+            html = body.read().decode()
+    except NotFoundError:
+        return [], []
+
+    hrefs = re.findall(r'href="([^"]+)"', html)
+    subdirs = []
+    files = []
+    for href in hrefs:
+        name = href.rstrip("/").split("/")[-1]
+        if not name or name == "..":
+            continue
+        if href.endswith("/"):
+            subdirs.append(name)
+        else:
+            files.append(name)
+    return subdirs, files
+
+
 def fetch_step_graph(gcs_path: str, gcsweb_base: str, dest: Path) -> list[dict[str, Any]]:
     """Download and parse ci-operator-step-graph.json.
     Saves the raw JSON to dest. Returns parsed list of step dicts.
-    Raises http.NotFoundError, requests.RequestException, or json.JSONDecodeError.
+    Raises NotFoundError, FetchError, or json.JSONDecodeError.
     """
     if dest.exists():
         try:
@@ -91,13 +119,11 @@ def fetch_step_graph(gcs_path: str, gcsweb_base: str, dest: Path) -> list[dict[s
 
     url = f"{gcsweb_base}{gcs_path}/artifacts/ci-operator-step-graph.json"
     logger.info(f"Fetching step graph: {url}")
-    response = http.session_get(url, timeout=30)
-    if response.status_code == 404:
-        raise http.NotFoundError(url)
-    response.raise_for_status()
-    parsed = json.loads(response.text)
+    with fetch_url(url) as body:
+        text = body.read().decode()
+    parsed = json.loads(text)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.write_text(response.text)
+    dest.write_text(text)
     return parsed
 
 
@@ -187,35 +213,35 @@ def download_failed_step_artifacts(gcs_path: str, gcsweb_base: str, failures: li
 
         build_log_url = f"{gcsweb_base}{step_base}/build-log.txt"
         try:
-            http.download_artifact(build_log_url, dest_dir / "build-log.txt")
+            _download(build_log_url, dest_dir / "build-log.txt")
             total += 1
-        except (http.NotFoundError, requests.RequestException):
+        except FetchError:
             pass
 
         artifacts_base = f"{step_base}/artifacts"
 
         try:
             junit_subdir_url = f"{gcsweb_base}{artifacts_base}/junit/"
-            _, files = http.list_gcsweb_dir(junit_subdir_url)
+            _, files = _list_gcsweb_dir(junit_subdir_url)
             for filename in [f for f in files if f.endswith(".xml")]:
                 try:
-                    http.download_artifact(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename)
+                    _download(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename)
                     total += 1
-                except (http.NotFoundError, requests.RequestException):
+                except FetchError:
                     pass
-        except requests.RequestException as e:
+        except FetchError as e:
             logger.warning(f"Failed to list junit dir for {full_step_name}: {e}")
 
         try:
             artifacts_url = f"{gcsweb_base}{artifacts_base}/"
-            _, root_files = http.list_gcsweb_dir(artifacts_url)
+            _, root_files = _list_gcsweb_dir(artifacts_url)
             for filename in [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]:
                 try:
-                    http.download_artifact(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename)
+                    _download(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename)
                     total += 1
-                except (http.NotFoundError, requests.RequestException):
+                except FetchError:
                     pass
-        except requests.RequestException as e:
+        except FetchError as e:
             logger.warning(f"Failed to list artifacts dir for {full_step_name}: {e}")
 
         logger.info(f"Downloaded artifacts for failed step {full_step_name}")
@@ -262,7 +288,7 @@ def discover_hypershift_dumps(gcs_path: str, gcsweb_base: str, steps: dict[str, 
     for test_name, step_info in hypershift_tests.items():
         inner_steps = step_info.get("inner_steps", {})
         if not inner_steps:
-            inner_step_names, _ = http.list_gcsweb_dir(
+            inner_step_names, _ = _list_gcsweb_dir(
                 f"{gcsweb_base}{gcs_path}/artifacts/{test_name}/"
             )
         else:
@@ -270,7 +296,7 @@ def discover_hypershift_dumps(gcs_path: str, gcsweb_base: str, steps: dict[str, 
 
         for inner_step in inner_step_names:
             inner_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{test_name}/{inner_step}/artifacts/"
-            test_subdirs, _ = http.list_gcsweb_dir(inner_artifacts_url)
+            test_subdirs, _ = _list_gcsweb_dir(inner_artifacts_url)
 
             for test_dir in test_subdirs:
                 if test_dir.startswith("Test"):
@@ -320,8 +346,8 @@ def download_must_gather(build_dir: Path, gcs_path: str, gcsweb_base: str, steps
     must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
     tar_dest = build_dir / "must-gather.tar"
     try:
-        http.download_artifact(must_gather_url, tar_dest)
-    except (http.NotFoundError, requests.RequestException) as e:
+        _download(must_gather_url, tar_dest)
+    except FetchError as e:
         raise ArtifactError(f"Failed to download must-gather: {e}") from e
 
     try:
@@ -356,8 +382,8 @@ def download_hypershift_dumps(build_dir: Path, gcs_path: str, gcsweb_base: str, 
         tar_dest = build_dir / "hostedcluster.tar"
         extract_dest = hypershift_dir / test_name
         try:
-            http.download_artifact(tar_url, tar_dest)
-        except (http.NotFoundError, requests.RequestException) as e:
+            _download(tar_url, tar_dest)
+        except FetchError as e:
             logger.warning(f"Failed to download {test_name} dump: {e}")
             continue
         try:
@@ -429,7 +455,7 @@ def process_build(build: prow.Build, output_dir: Path, prow_base_url: str,
 
     try:
         gcsweb_base = prow.discover_gcsweb_base(prow_base_url, spyglass_link)
-    except (requests.RequestException, ValueError) as e:
+    except (FetchError, ValueError) as e:
         logger.warning(f"Build {build_id}: Could not discover gcsweb URL ({e}), skipping artifact downloads")
         write_build_metadata(build, build_dir, prow_base_url, gcs_path=gcs_path)
         return
@@ -441,15 +467,15 @@ def process_build(build: prow.Build, output_dir: Path, prow_base_url: str,
     else:
         junit_url = f"{gcsweb_base}{gcs_path}/artifacts/junit_operator.xml"
         try:
-            http.download_artifact(junit_url, junit_dest)
-        except (http.NotFoundError, requests.RequestException) as e:
+            _download(junit_url, junit_dest)
+        except FetchError as e:
             logger.warning(f"Build {build_id}: junit_operator.xml not available: {e}")
 
     # Fetch step graph (saved as artifact)
     step_graph_dest = build_dir / "ci-operator-step-graph.json"
     try:
         step_graph = fetch_step_graph(gcs_path, gcsweb_base, step_graph_dest)
-    except (http.NotFoundError, requests.RequestException, json.JSONDecodeError) as e:
+    except (FetchError, json.JSONDecodeError) as e:
         logger.warning(f"Build {build_id}: step graph unavailable: {e}")
         step_graph = None
 

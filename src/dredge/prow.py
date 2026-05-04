@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
-import requests
-
-from . import http
+from .fetch_url import fetch_url, FetchError
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ def discover_gcsweb_base(prow_base_url: str, spyglass_link: str) -> str:
     Discover the gcsweb base URL by fetching the Spyglass page and extracting
     artifact links. Caches the result per prow instance.
 
-    Raises requests.RequestException on network errors.
+    Raises FetchError on network errors.
     Raises ValueError when gcsweb pattern not found in HTML.
     """
     if prow_base_url in _gcsweb_base_cache:
@@ -112,9 +110,8 @@ def discover_gcsweb_base(prow_base_url: str, spyglass_link: str) -> str:
 
     spyglass_url = f"{prow_base_url}{spyglass_link}"
     logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
-    response = http.session_get(spyglass_url, timeout=30)
-    response.raise_for_status()
-    html = response.text
+    with fetch_url(spyglass_url) as body:
+        html = body.read().decode()
 
     gcsweb_pattern = r'(https?://[^"\s]+/gcs/)[^"\s]+'
     match = re.search(gcsweb_pattern, html)
@@ -148,8 +145,9 @@ def collect_builds(start_url: str, count: int, failure: bool = False, success: b
 
     while len(builds_collected) < count:
         try:
-            html = http.fetch_page(current_url)
-        except requests.RequestException:
+            with fetch_url(current_url) as body:
+                html = body.read().decode()
+        except FetchError:
             logger.error("Failed to fetch job history page")
             break
 

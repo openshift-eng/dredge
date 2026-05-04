@@ -10,9 +10,9 @@ from urllib.parse import urlparse
 import requests
 
 from . import artifacts
-from . import auth
 from . import github
 from . import prow
+from .fetch_url import _auth
 
 logger = logging.getLogger(__name__)
 
@@ -318,7 +318,7 @@ def main() -> None:
     setup_logging()
     args = parse_args()
 
-    auth.configure(extra_trusted_domains=args.trusted_redirect_domain)
+    _auth.configure(extra_trusted_domains=args.trusted_redirect_domain)
 
     output_dir = None
     if hasattr(args, "d"):
