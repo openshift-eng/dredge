@@ -3,15 +3,88 @@ import logging
 from pathlib import Path
 
 from ..fetch_url import FetchError
+from ..step import Step
 from . import _metadata
 
-__all__ = ["import_job", "JobImportError"]
+__all__ = ["import_job", "Job", "JobImportError"]
 
 logger = logging.getLogger(__name__)
 
 
 class JobImportError(Exception):
     pass
+
+
+class Job:
+    def __init__(self, job_dir):
+        job_dir = Path(job_dir)
+        self.job_dir = job_dir
+
+        job_data = json.loads((job_dir / "job.json").read_text())
+        self.spyglass = job_data["spyglass"]
+        self.build_id = job_data["build_id"]
+        self.job_name = job_data["job_name"]
+        self.job_type = job_data["job_type"]
+        self.pr_link = job_data["pr_link"]
+        self.gcs_path = job_data["gcs_path"]
+        self.gcsweb_base = job_data["gcsweb_base"]
+
+        self._steps_data = json.loads((job_dir / "steps.json").read_text())
+
+    def step(self, name, inner_name=None):
+        if name not in self._steps_data:
+            raise KeyError(f"Step not found: {name}")
+        step_info = self._steps_data[name]
+
+        if inner_name is None:
+            return Step(
+                name=name,
+                success=step_info["success"],
+                gcs_path=self.gcs_path,
+                gcsweb_base=self.gcsweb_base,
+                job_dir=self.job_dir,
+            )
+
+        substeps = step_info.get("substeps", {})
+        if inner_name not in substeps:
+            raise KeyError(f"Inner step not found: {name}/{inner_name}")
+        return Step(
+            name=inner_name,
+            success=substeps[inner_name]["success"],
+            gcs_path=self.gcs_path,
+            gcsweb_base=self.gcsweb_base,
+            job_dir=self.job_dir,
+            test_name=name,
+        )
+
+    def steps(self):
+        return [
+            Step(
+                name=name,
+                success=info["success"],
+                gcs_path=self.gcs_path,
+                gcsweb_base=self.gcsweb_base,
+                job_dir=self.job_dir,
+            )
+            for name, info in self._steps_data.items()
+        ]
+
+    def failed_steps(self):
+        result = []
+        for name, info in self._steps_data.items():
+            for inner_name, inner_info in info.get("substeps", {}).items():
+                if not inner_info["success"]:
+                    result.append(
+                        Step(
+                            name=inner_name,
+                            success=False,
+                            gcs_path=self.gcs_path,
+                            gcsweb_base=self.gcsweb_base,
+                            job_dir=self.job_dir,
+                            test_name=name,
+                        )
+                    )
+        return result
 
 
 def import_job(spyglass_url, output_dir):
@@ -24,7 +97,7 @@ def import_job(spyglass_url, output_dir):
     job_dir = output_dir / build_id
 
     if (job_dir / "job.json").exists() and (job_dir / "steps.json").exists():
-        return job_dir
+        return Job(job_dir)
 
     try:
         gcsweb_base = _metadata.discover_gcsweb_base(prow_base_url, spyglass_link)
@@ -58,4 +131,4 @@ def import_job(spyglass_url, output_dir):
     (job_dir / "steps.json").write_text(json.dumps(steps_hierarchy, indent=2))
     (job_dir / "ci-operator-step-graph.json").write_text(json.dumps(step_graph, indent=2))
 
-    return job_dir
+    return Job(job_dir)
