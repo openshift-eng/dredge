@@ -1,10 +1,8 @@
 import argparse
-import json
 import logging
 import re
 import sys
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -13,6 +11,7 @@ from . import artifacts
 from . import github
 from . import prow
 from .fetch_url import _auth
+from .import_job import Job
 
 logger = logging.getLogger(__name__)
 
@@ -123,30 +122,16 @@ def _resolve_auto_flags(args: argparse.Namespace) -> tuple[bool, bool]:
     return auto_must_gather, auto_hypershift
 
 
-def _load_job_info(build_dir: Path) -> dict[str, Any]:
-    """Load and validate job.json from a build directory."""
-    job_json_path = build_dir / "job.json"
-    if not job_json_path.exists():
-        logger.error(f"job.json not found in {build_dir}")
-        sys.exit(1)
-
+def _load_job(build_dir: Path) -> Job:
+    """Load Job from a build directory."""
     try:
-        with open(job_json_path) as f:
-            info = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"Failed to read job.json: {e}")
+        return Job(build_dir)
+    except FileNotFoundError:
+        logger.error(f"job.json or steps.json not found in {build_dir}")
         sys.exit(1)
-
-    gcs_path = info.get("gcs_path")
-    gcsweb_base = info.get("gcsweb_base")
-    if not gcs_path or not gcsweb_base:
-        logger.error(
-            f"job.json in {build_dir} is missing gcs_path or gcsweb_base. "
-            "Re-run a discovery command (history/urls/pr) to update it."
-        )
+    except Exception as e:
+        logger.error(f"Failed to load job from {build_dir}: {e}")
         sys.exit(1)
-
-    return info
 
 
 def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
@@ -275,12 +260,9 @@ def cmd_must_gather(args: argparse.Namespace, output_dir: Path | None) -> None:
         logger.error(f"Build directory does not exist: {build_dir}")
         sys.exit(1)
 
-    info = _load_job_info(build_dir)
-    gcs_path = info["gcs_path"]
-    gcsweb_base = info["gcsweb_base"]
-
+    job = _load_job(build_dir)
     try:
-        artifacts.download_must_gather(build_dir, gcs_path, gcsweb_base, args.step_name)
+        artifacts.download_must_gather(job, args.step_name)
     except artifacts.ArtifactError as e:
         logger.error(str(e))
         sys.exit(1)
@@ -293,12 +275,9 @@ def cmd_hypershift_dump(args: argparse.Namespace, output_dir: Path | None) -> No
         logger.error(f"Build directory does not exist: {build_dir}")
         sys.exit(1)
 
-    info = _load_job_info(build_dir)
-    gcs_path = info["gcs_path"]
-    gcsweb_base = info["gcsweb_base"]
-
+    job = _load_job(build_dir)
     try:
-        artifacts.download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, args.step_name)
+        artifacts.download_hypershift_dumps(job, args.step_name)
     except artifacts.ArtifactError as e:
         logger.error(str(e))
         sys.exit(1)
