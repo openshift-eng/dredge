@@ -34,15 +34,10 @@ Each subdirectory is named by build ID and may contain:
   - `pr_link`: GitHub PR URL (if PR job)
   - `gcs_path`: GCS bucket path for this build's artifacts
   - `gcsweb_base`: Base URL for gcsweb artifact access
-  - `steps`: List of top-level CI steps, each with:
-    - `name`: Step name
-    - `success`: Whether the step passed
-    - `steps_file`: Filename of inner steps JSON (only for multi-stage tests)
 
-- `{{test}}.steps.json` - Inner steps for a multi-stage test, keyed by step name:
+- `steps.json` - Recursive step hierarchy keyed by step name:
   - Each entry has `success: bool`
-
-- `steps.json` - Symlink to the first multi-stage test's steps file
+  - Multi-stage tests also have `substeps: {{...}}` with the same structure
 
 - `ci-operator-step-graph.json` - Raw step graph from ci-operator
 
@@ -61,10 +56,9 @@ Each subdirectory is named by build ID and may contain:
 
 ## Analyzing Test Failures
 
-1. Check `job.json` for the job link, PR context, and step list
-2. Identify failed steps from `steps` in `job.json`
-3. Read inner step details from `*.steps.json` files
-4. Read `build-logs/{{step}}/build-log.txt` for complete failure output
+1. Check `job.json` for the job link and PR context
+2. Read `steps.json` for the step hierarchy and identify failed steps
+3. Read `build-logs/{{step}}/build-log.txt` for complete failure output
 5. Parse `build-logs/{{step}}/junit_e2e__*.xml` for individual e2e test failures (if available)
 6. For cluster issues, examine logs in `must-gather/`
 
@@ -163,16 +157,13 @@ def download_failed_step_artifacts(gcs_path: str, gcsweb_base: str, failures: li
 
 def discover_must_gather(job_dir: Path, gcs_path: str) -> str:
     """
-    Find must-gather.tar by scanning *.steps.json files for gather-must-gather.
+    Find must-gather.tar by scanning steps.json for gather-must-gather substep.
     Returns the full GCS path to must-gather.tar.
     Raises ArtifactError if no must-gather step is found.
     """
-    for steps_file in sorted(job_dir.glob("*.steps.json")):
-        if steps_file.name == "steps.json":
-            continue
-        test_name = steps_file.name.removesuffix(".steps.json")
-        inner = json.loads(steps_file.read_text())
-        if "gather-must-gather" not in inner:
+    steps = json.loads((job_dir / "steps.json").read_text())
+    for test_name, step_info in steps.items():
+        if "gather-must-gather" not in step_info.get("substeps", {}):
             continue
         full_path = f"{gcs_path}/artifacts/{test_name}/gather-must-gather/artifacts/must-gather.tar"
         logger.info(f"Must-gather candidate: {test_name}/gather-must-gather/artifacts/must-gather.tar")
@@ -273,29 +264,25 @@ def download_must_gather(job_dir: Path, gcs_path: str, gcsweb_base: str, step_na
 
 def _build_hypershift_steps(job_dir: Path) -> dict[str, Any]:
     """Build step hierarchy with dependencies for hypershift detection.
-    Reads the saved step graph and *.steps.json files.
+    Reads the saved step graph and steps.json.
     """
     step_graph_path = job_dir / "ci-operator-step-graph.json"
     if not step_graph_path.exists():
         raise ArtifactError("Step graph not available for hypershift detection")
     step_graph = json.loads(step_graph_path.read_text())
 
+    steps_hierarchy = json.loads((job_dir / "steps.json").read_text())
+
     steps: dict[str, Any] = {}
     for s in step_graph:
         name = s.get("name", "")
         if name.startswith("["):
             continue
+        substeps = steps_hierarchy.get(name, {}).get("substeps", {})
         steps[name] = {
             "dependencies": s.get("dependencies"),
-            "inner_steps": {},
+            "inner_steps": substeps,
         }
-
-    for steps_file in job_dir.glob("*.steps.json"):
-        if steps_file.name == "steps.json":
-            continue
-        test_name = steps_file.name.removesuffix(".steps.json")
-        if test_name in steps:
-            steps[test_name]["inner_steps"] = json.loads(steps_file.read_text())
 
     return steps
 
@@ -360,16 +347,14 @@ def write_agents_md(output_dir: Path) -> None:
     logger.info(f"Wrote AGENTS.md to: {agents_md_path}")
 
 
-def _collect_failures(job_dir: Path, job: dict[str, Any]) -> list[tuple[str, str]]:
-    """Collect failed inner steps from *.steps.json files."""
+def _collect_failures(job_dir: Path) -> list[tuple[str, str]]:
+    """Collect failed inner steps from steps.json."""
+    steps = json.loads((job_dir / "steps.json").read_text())
     failures = []
-    for step in job["steps"]:
-        if "steps_file" not in step:
-            continue
-        inner = json.loads((job_dir / step["steps_file"]).read_text())
-        for inner_name, inner_info in inner.items():
+    for step_name, step_info in steps.items():
+        for inner_name, inner_info in step_info.get("substeps", {}).items():
             if not inner_info["success"]:
-                failures.append((step["name"], inner_name))
+                failures.append((step_name, inner_name))
     return failures
 
 
@@ -391,7 +376,7 @@ def process_build(spyglass_url: str, output_dir: Path,
     if logs_dir.exists():
         logger.info(f"Build {build_id}: build-logs directory already exists, skipping")
     else:
-        failures = _collect_failures(job_dir, job)
+        failures = _collect_failures(job_dir)
         if failures:
             count = download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir)
             if count:

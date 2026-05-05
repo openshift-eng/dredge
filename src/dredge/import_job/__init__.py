@@ -38,17 +38,12 @@ def import_job(spyglass_url, output_dir):
 
     job_dir.mkdir(parents=True, exist_ok=True)
 
-    first_steps_file = None
-    steps_list = []
+    steps_hierarchy = {}
     for step in steps:
-        entry = {"name": step["name"], "success": step["success"]}
+        entry = {"success": step["success"]}
         if step.get("inner_steps"):
-            steps_file = f"{step['name']}.steps.json"
-            entry["steps_file"] = steps_file
-            (job_dir / steps_file).write_text(json.dumps(step["inner_steps"], indent=2))
-            if first_steps_file is None:
-                first_steps_file = steps_file
-        steps_list.append(entry)
+            entry["substeps"] = step["inner_steps"]
+        steps_hierarchy[step["name"]] = entry
 
     job_data = {
         "spyglass": spyglass_url,
@@ -58,15 +53,9 @@ def import_job(spyglass_url, output_dir):
         "pr_link": job_spec["pr_link"],
         "gcs_path": gcs_path,
         "gcsweb_base": gcsweb_base,
-        "steps": steps_list,
     }
     (job_dir / "job.json").write_text(json.dumps(job_data, indent=2))
+    (job_dir / "steps.json").write_text(json.dumps(steps_hierarchy, indent=2))
     (job_dir / "ci-operator-step-graph.json").write_text(json.dumps(step_graph, indent=2))
-
-    if first_steps_file:
-        steps_symlink = job_dir / "steps.json"
-        if steps_symlink.exists() or steps_symlink.is_symlink():
-            steps_symlink.unlink()
-        steps_symlink.symlink_to(first_steps_file)
 
     return job_dir

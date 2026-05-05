@@ -135,8 +135,8 @@ uv run dredge hypershift-dump ./artifacts/<build_id> e2e-hypershift
 2. Handle 404 gracefully (some builds may not have the artifact)
 
 ### Changing must-gather discovery
-The `artifacts.discover_must_gather()` function scans `*.steps.json` files in
-the job directory for a `gather-must-gather` key, then returns a deterministic
+The `artifacts.discover_must_gather()` function scans `steps.json`
+for steps with a `gather-must-gather` substep, then returns a deterministic
 GCS path without HTTP directory listing. Must-gather is not downloaded by
 default; use `--auto-must-gather` during discovery or the `must-gather`
 subcommand on an existing build directory.
@@ -169,14 +169,9 @@ Each build directory contains `job.json` with:
 - `pr_link`: GitHub PR URL (if PR job, null otherwise)
 - `gcs_path`: GCS bucket path for this build's artifacts (used by standalone commands)
 - `gcsweb_base`: Base URL for gcsweb artifact access (used by standalone commands)
-- `steps`: List of top-level steps, each with:
-  - `name`: Step name
-  - `success`: Whether the step passed
-  - `steps_file`: Filename of inner steps JSON (only for multi-stage tests)
-
-Each multi-stage test also has a `{test}.steps.json` file (dict keyed by
-prefix-stripped inner step name, each with `success: bool`).
-`steps.json` is a symlink to the first multi-stage test's steps file.
+`steps.json` contains a recursive step hierarchy keyed by step name.
+Each entry has `success: bool`. Multi-stage tests also have
+`substeps: { inner_step_name: { success: bool }, ... }`.
 
 ## Error Handling
 

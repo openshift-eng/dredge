@@ -55,46 +55,17 @@ class TestImportJob:
         assert job["gcsweb_base"] == GCSWEB_BASE
 
     @responses.activate
-    def test_steps_list_filters_bracket_steps(self, tmp_path):
+    def test_steps_json_contains_recursive_hierarchy(self, tmp_path):
         _mock_all()
 
         job_dir = import_job(SPYGLASS_URL, tmp_path)
 
-        job = json.loads((job_dir / "job.json").read_text())
-        step_names = [s["name"] for s in job["steps"]]
-        assert "[input:root]" not in step_names
-        assert "src" in step_names
-        assert "breaking-changes" in step_names
-
-        src = next(s for s in job["steps"] if s["name"] == "src")
-        assert src["success"] is True
-        assert "steps_file" not in src
-
-        bc = next(s for s in job["steps"] if s["name"] == "breaking-changes")
-        assert bc["success"] is False
-        assert bc["steps_file"] == "breaking-changes.steps.json"
-
-    @responses.activate
-    def test_inner_steps_file_has_correct_content(self, tmp_path):
-        _mock_all()
-
-        job_dir = import_job(SPYGLASS_URL, tmp_path)
-
-        steps_file = job_dir / "breaking-changes.steps.json"
-        assert steps_file.exists()
-        inner = json.loads(steps_file.read_text())
-        assert inner["setup"]["success"] is True
-        assert inner["breaking-changes"]["success"] is False
-
-    @responses.activate
-    def test_steps_json_is_symlink_to_first_multistage(self, tmp_path):
-        _mock_all()
-
-        job_dir = import_job(SPYGLASS_URL, tmp_path)
-
-        steps_link = job_dir / "steps.json"
-        assert steps_link.is_symlink()
-        assert steps_link.resolve() == (job_dir / "breaking-changes.steps.json").resolve()
+        steps = json.loads((job_dir / "steps.json").read_text())
+        assert "[input:root]" not in steps
+        assert steps["src"] == {"success": True}
+        assert steps["breaking-changes"]["success"] is False
+        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
 
     @responses.activate
     def test_idempotent_skips_refetch(self, tmp_path):
