@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="ci-operator" tests="2" failures="1">
+    <testcase name="Run multi-stage test breaking-changes - breaking-changes-setup container test" time="30.0">
+    </testcase>
+    <testcase name="Run multi-stage test breaking-changes - breaking-changes-breaking-changes container test" time="120.0">
+      <failure message="the step failed">Process exited with code 1</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
