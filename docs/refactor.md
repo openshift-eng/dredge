@@ -27,7 +27,7 @@ A prow job is conceptually a list of executed steps, their artifacts and whether
 * step_get_log <build-id> <step> -> local path of downloaded artifact
 - Download build-log.
 
-* step_artifacts_list <build-id> <step> <path>
+* step_list_artifacts <build-id> <step> <path>
 - Returns a list of directory entries for the step at <path>
 - Top level path is "."
 - Directory entry is:
@@ -35,7 +35,7 @@ A prow job is conceptually a list of executed steps, their artifacts and whether
   * size: <size in bytes> (unset for directories)
   * type: (dir|file)
 
-* step_artifact_get <build-id> <step> <path> -> local path of downloaded artifact
+* step_get_artifact <build-id> <step> <path> -> local path of downloaded artifact
 
 Layout of job directory:
 <build-id>/
