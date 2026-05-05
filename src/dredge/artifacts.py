@@ -1,13 +1,13 @@
 import json
 import logging
-import re
-import shutil
 import tarfile
 from pathlib import Path
 from typing import Any
 
-from .fetch_url import fetch_url, FetchError, NotFoundError
-from .import_job import import_job, JobImportError
+from .fetch_url import FetchError
+from .import_job import import_job, Job, JobImportError
+from .step import Step
+from .step import _gcsweb
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +41,11 @@ Each subdirectory is named by build ID and may contain:
 
 - `ci-operator-step-graph.json` - Raw step graph from ci-operator
 
-- `build-logs/` - Artifacts for failed steps only
-  - `{{step-name}}/` - One subdirectory per failed step
-    - `build-log.txt` - Complete untruncated build log
-    - `junit_e2e__*.xml` - Individual e2e test results (if the step produced junit output)
-    - `e2e-monitor-tests__*.xml` - Monitor test results (if available)
+- `{{test_name}}/{{inner_step}}/` - Artifacts for failed steps, mirroring the GCS layout
+  - `build-log.txt` - Complete untruncated build log
+  - `artifacts/` - Step-produced artifacts
+    - `junit/` - Individual e2e test results (if the step produced junit output)
+    - `junit_e2e__*.xml` - Individual e2e test results at root level
 
 - `must-gather/` - Extracted must-gather diagnostic data (if downloaded via --auto-must-gather or must-gather command)
 
@@ -58,8 +58,8 @@ Each subdirectory is named by build ID and may contain:
 
 1. Check `job.json` for the job link and PR context
 2. Read `steps.json` for the step hierarchy and identify failed steps
-3. Read `build-logs/{{step}}/build-log.txt` for complete failure output
-5. Parse `build-logs/{{step}}/junit_e2e__*.xml` for individual e2e test failures (if available)
+3. Read `{{test_name}}/{{inner_step}}/build-log.txt` for complete failure output
+5. Parse `{{test_name}}/{{inner_step}}/artifacts/junit/*.xml` for individual e2e test failures (if available)
 6. For cluster issues, examine logs in `must-gather/`
 
 ## must-gather Contents
@@ -73,147 +73,6 @@ The must-gather directory contains OpenShift cluster diagnostics:
 Look for errors in `must-gather/*/logs/` and check operator status in
 `must-gather/*/cluster-scoped-resources/`.
 """
-
-
-def _download(url: str, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    with fetch_url(url) as body:
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(body, f)
-    logger.info(f"Downloaded to: {dest}")
-
-
-def _list_gcsweb_dir(url: str) -> tuple[list[str], list[str]]:
-    try:
-        with fetch_url(url) as body:
-            html = body.read().decode()
-    except NotFoundError:
-        return [], []
-
-    hrefs = re.findall(r'href="([^"]+)"', html)
-    subdirs = []
-    files = []
-    for href in hrefs:
-        name = href.rstrip("/").split("/")[-1]
-        if not name or name == "..":
-            continue
-        if href.endswith("/"):
-            subdirs.append(name)
-        else:
-            files.append(name)
-    return subdirs, files
-
-
-def download_failed_step_artifacts(gcs_path: str, gcsweb_base: str, failures: list[tuple[str, str]], logs_dir: Path) -> int:
-    """
-    Download build-log.txt and any junit XML files for each failed step.
-
-    build-log.txt is at a deterministic path (no directory listing needed).
-    junit files require up to 2 directory listing requests per failed step.
-    """
-    total = 0
-
-    for test_name, full_step_name in failures:
-        step_base = f"{gcs_path}/artifacts/{test_name}/{full_step_name}"
-        dest_dir = logs_dir / full_step_name
-
-        build_log_url = f"{gcsweb_base}{step_base}/build-log.txt"
-        try:
-            _download(build_log_url, dest_dir / "build-log.txt")
-            total += 1
-        except FetchError:
-            pass
-
-        artifacts_base = f"{step_base}/artifacts"
-
-        try:
-            junit_subdir_url = f"{gcsweb_base}{artifacts_base}/junit/"
-            _, files = _list_gcsweb_dir(junit_subdir_url)
-            for filename in [f for f in files if f.endswith(".xml")]:
-                try:
-                    _download(f"{gcsweb_base}{artifacts_base}/junit/{filename}", dest_dir / filename)
-                    total += 1
-                except FetchError:
-                    pass
-        except FetchError as e:
-            logger.warning(f"Failed to list junit dir for {full_step_name}: {e}")
-
-        try:
-            artifacts_url = f"{gcsweb_base}{artifacts_base}/"
-            _, root_files = _list_gcsweb_dir(artifacts_url)
-            for filename in [f for f in root_files if f.startswith("junit") and f.endswith(".xml")]:
-                try:
-                    _download(f"{gcsweb_base}{artifacts_base}/{filename}", dest_dir / filename)
-                    total += 1
-                except FetchError:
-                    pass
-        except FetchError as e:
-            logger.warning(f"Failed to list artifacts dir for {full_step_name}: {e}")
-
-        logger.info(f"Downloaded artifacts for failed step {full_step_name}")
-
-    return total
-
-
-def discover_must_gather(job_dir: Path, gcs_path: str) -> str:
-    """
-    Find must-gather.tar by scanning steps.json for gather-must-gather substep.
-    Returns the full GCS path to must-gather.tar.
-    Raises ArtifactError if no must-gather step is found.
-    """
-    steps = json.loads((job_dir / "steps.json").read_text())
-    for test_name, step_info in steps.items():
-        if "gather-must-gather" not in step_info.get("substeps", {}):
-            continue
-        full_path = f"{gcs_path}/artifacts/{test_name}/gather-must-gather/artifacts/must-gather.tar"
-        logger.info(f"Must-gather candidate: {test_name}/gather-must-gather/artifacts/must-gather.tar")
-        return full_path
-
-    raise ArtifactError("No must-gather found in any test step")
-
-
-def discover_hypershift_dumps(gcs_path: str, gcsweb_base: str, steps: dict[str, Any]) -> list[tuple[str, str]]:
-    """
-    Find hostedcluster.tar files from steps running the HyperShift test binary.
-    Uses step hierarchy to identify relevant steps via [input:hypershift-tests]
-    dependency, and inner step names to avoid directory listing where possible.
-    Returns list of (test_dir_name, gcs_tar_path) tuples.
-    Raises ArtifactError if no hypershift test steps or dumps are found.
-    """
-    hypershift_tests = {
-        name: info for name, info in steps.items()
-        if "[input:hypershift-tests]" in (info.get("dependencies") or [])
-    }
-
-    if not hypershift_tests:
-        raise ArtifactError("No HyperShift test steps found in build")
-
-    logger.info(f"Found HyperShift test steps: {list(hypershift_tests)}")
-    results = []
-
-    for test_name, step_info in hypershift_tests.items():
-        inner_steps = step_info.get("inner_steps", {})
-        if not inner_steps:
-            inner_step_names, _ = _list_gcsweb_dir(
-                f"{gcsweb_base}{gcs_path}/artifacts/{test_name}/"
-            )
-        else:
-            inner_step_names = list(inner_steps)
-
-        for inner_step in inner_step_names:
-            inner_artifacts_url = f"{gcsweb_base}{gcs_path}/artifacts/{test_name}/{inner_step}/artifacts/"
-            test_subdirs, _ = _list_gcsweb_dir(inner_artifacts_url)
-
-            for test_dir in test_subdirs:
-                if test_dir.startswith("Test"):
-                    tar_path = f"{gcs_path}/artifacts/{test_name}/{inner_step}/artifacts/{test_dir}/hostedcluster.tar"
-                    results.append((test_dir, tar_path))
-                    logger.info(f"Found hostedcluster dump: {test_name}/{inner_step}/artifacts/{test_dir}/hostedcluster.tar")
-
-    if not results:
-        raise ArtifactError("No hypershift dumps found in HyperShift test steps")
-
-    return results
 
 
 def extract_tgz(tar_path: Path, dest_dir: Path) -> None:
@@ -235,94 +94,161 @@ def extract_tgz(tar_path: Path, dest_dir: Path) -> None:
     tar_path.unlink()
 
 
-def download_must_gather(job_dir: Path, gcs_path: str, gcsweb_base: str, step_name: str | None = None) -> None:
+def _download_failed_step_artifacts(job: Job) -> int:
+    total = 0
+    for step in job.failed_steps():
+        try:
+            step.get_log()
+            total += 1
+        except FetchError:
+            pass
+
+        try:
+            for entry in step.list_artifacts("junit"):
+                if entry["type"] == "file" and entry["filename"].endswith(".xml"):
+                    try:
+                        step.get_artifact(f"junit/{entry['filename']}")
+                        total += 1
+                    except FetchError:
+                        pass
+        except FetchError as e:
+            logger.warning(f"Failed to list junit dir for {step.name}: {e}")
+
+        try:
+            for entry in step.list_artifacts():
+                if (entry["type"] == "file"
+                        and entry["filename"].startswith("junit")
+                        and entry["filename"].endswith(".xml")):
+                    try:
+                        step.get_artifact(entry["filename"])
+                        total += 1
+                    except FetchError:
+                        pass
+        except FetchError as e:
+            logger.warning(f"Failed to list artifacts dir for {step.name}: {e}")
+
+        logger.info(f"Downloaded artifacts for failed step {step.name}")
+
+    return total
+
+
+def download_must_gather(job: Job, step_name: str | None = None) -> None:
     """Download and extract must-gather. No-op if already exists.
     Raises ArtifactError if must-gather cannot be found, downloaded, or extracted.
     """
-    extract_dir = job_dir / "must-gather"
+    extract_dir = job.job_dir / "must-gather"
     if extract_dir.exists():
         logger.info("must-gather already exists, skipping")
         return
 
     if step_name:
-        must_gather_gcs_path = f"{gcs_path}/artifacts/{step_name}/gather-must-gather/artifacts/must-gather.tar"
+        step = job.step(step_name, "gather-must-gather")
     else:
-        must_gather_gcs_path = discover_must_gather(job_dir, gcs_path)
+        for top_step in job.steps():
+            try:
+                step = job.step(top_step.name, "gather-must-gather")
+                break
+            except KeyError:
+                continue
+        else:
+            raise ArtifactError("No must-gather found in any test step")
 
-    must_gather_url = f"{gcsweb_base}{must_gather_gcs_path}"
-    tar_dest = job_dir / "must-gather.tar"
+    logger.info(f"Must-gather candidate: {step.step_path}/artifacts/must-gather.tar")
     try:
-        _download(must_gather_url, tar_dest)
+        tar_path = step.get_artifact("must-gather.tar")
     except FetchError as e:
         raise ArtifactError(f"Failed to download must-gather: {e}") from e
 
     try:
-        extract_tgz(tar_dest, extract_dir)
+        extract_tgz(tar_path, extract_dir)
     except (tarfile.TarError, OSError) as e:
         raise ArtifactError(f"Failed to extract must-gather: {e}") from e
 
 
-def _build_hypershift_steps(job_dir: Path) -> dict[str, Any]:
-    """Build step hierarchy with dependencies for hypershift detection.
-    Reads the saved step graph and steps.json.
+def _discover_hypershift_dumps(job: Job, step_name: str | None = None) -> list[tuple[str, Step]]:
+    """Find hostedcluster.tar files from steps running the HyperShift test binary.
+    Returns list of (test_dir_name, step) tuples.
     """
-    step_graph_path = job_dir / "ci-operator-step-graph.json"
+    step_graph_path = job.job_dir / "ci-operator-step-graph.json"
     if not step_graph_path.exists():
         raise ArtifactError("Step graph not available for hypershift detection")
     step_graph = json.loads(step_graph_path.read_text())
 
-    steps_hierarchy = json.loads((job_dir / "steps.json").read_text())
+    hypershift_test_names = {
+        s["name"] for s in step_graph
+        if not s.get("name", "").startswith("[")
+        and "[input:hypershift-tests]" in (s.get("dependencies") or [])
+    }
 
-    steps: dict[str, Any] = {}
-    for s in step_graph:
-        name = s.get("name", "")
-        if name.startswith("["):
-            continue
-        substeps = steps_hierarchy.get(name, {}).get("substeps", {})
-        steps[name] = {
-            "dependencies": s.get("dependencies"),
-            "inner_steps": substeps,
-        }
+    if step_name:
+        if step_name not in hypershift_test_names:
+            raise ArtifactError(f"Step '{step_name}' not found in build steps")
+        hypershift_test_names = {step_name}
 
-    return steps
+    if not hypershift_test_names:
+        raise ArtifactError("No HyperShift test steps found in build")
+
+    logger.info(f"Found HyperShift test steps: {sorted(hypershift_test_names)}")
+    results = []
+
+    for test_name in sorted(hypershift_test_names):
+        inner_names = list(job._steps_data.get(test_name, {}).get("substeps", {}).keys())
+
+        if not inner_names:
+            inner_names, _ = _gcsweb.list_dir(
+                f"{job.gcsweb_base}{job.gcs_path}/artifacts/{test_name}/"
+            )
+
+        for inner_name in inner_names:
+            try:
+                step = job.step(test_name, inner_name)
+            except KeyError:
+                step = Step(
+                    name=inner_name,
+                    success=True,
+                    gcs_path=job.gcs_path,
+                    gcsweb_base=job.gcsweb_base,
+                    job_dir=job.job_dir,
+                    test_name=test_name,
+                )
+
+            entries = step.list_artifacts()
+            for entry in entries:
+                if entry["type"] == "dir" and entry["filename"].startswith("Test"):
+                    results.append((entry["filename"], step))
+                    logger.info(
+                        f"Found hostedcluster dump: "
+                        f"{step.step_path}/artifacts/{entry['filename']}/hostedcluster.tar"
+                    )
+
+    if not results:
+        raise ArtifactError("No hypershift dumps found in HyperShift test steps")
+
+    return results
 
 
-def download_hypershift_dumps(job_dir: Path, gcs_path: str, gcsweb_base: str, step_name: str | None = None) -> None:
+def download_hypershift_dumps(job: Job, step_name: str | None = None) -> None:
     """Download and extract hypershift dumps. No-op if already exists.
     Raises ArtifactError if no dumps can be found.
     """
-    hypershift_dir = job_dir / "hypershift-dumps"
+    hypershift_dir = job.job_dir / "hypershift-dumps"
     if hypershift_dir.exists():
         logger.info("hypershift-dumps already exists, skipping")
         return
 
-    steps = _build_hypershift_steps(job_dir)
+    dumps = _discover_hypershift_dumps(job, step_name)
 
-    if step_name:
-        if step_name not in steps:
-            raise ArtifactError(f"Step '{step_name}' not found in build steps")
-        filtered_steps = {step_name: steps[step_name]}
-    else:
-        filtered_steps = steps
-
-    if not filtered_steps:
-        raise ArtifactError("No step data available for hypershift dump discovery")
-
-    dumps = discover_hypershift_dumps(gcs_path, gcsweb_base, filtered_steps)
-
-    for test_name, tar_gcs_path in dumps:
-        tar_url = f"{gcsweb_base}{tar_gcs_path}"
-        tar_dest = job_dir / "hostedcluster.tar"
-        extract_dest = hypershift_dir / test_name
+    for test_dir, step in dumps:
         try:
-            _download(tar_url, tar_dest)
+            tar_path = step.get_artifact(f"{test_dir}/hostedcluster.tar")
         except FetchError as e:
-            logger.warning(f"Failed to download {test_name} dump: {e}")
+            logger.warning(f"Failed to download {test_dir} dump: {e}")
             continue
+        extract_dest = hypershift_dir / test_dir
         try:
-            extract_tgz(tar_dest, extract_dest)
+            extract_tgz(tar_path, extract_dest)
         except (tarfile.TarError, OSError) as e:
-            logger.warning(f"Failed to extract {test_name} dump: {e}")
+            logger.warning(f"Failed to extract {test_dir} dump: {e}")
 
 
 def write_agents_md(output_dir: Path) -> None:
@@ -347,53 +273,33 @@ def write_agents_md(output_dir: Path) -> None:
     logger.info(f"Wrote AGENTS.md to: {agents_md_path}")
 
 
-def _collect_failures(job_dir: Path) -> list[tuple[str, str]]:
-    """Collect failed inner steps from steps.json."""
-    steps = json.loads((job_dir / "steps.json").read_text())
-    failures = []
-    for step_name, step_info in steps.items():
-        for inner_name, inner_info in step_info.get("substeps", {}).items():
-            if not inner_info["success"]:
-                failures.append((step_name, inner_name))
-    return failures
-
-
 def process_build(spyglass_url: str, output_dir: Path,
                   auto_must_gather: bool = False, auto_hypershift: bool = False) -> None:
     """Import and download artifacts for one build."""
     try:
-        job_dir = import_job(spyglass_url, output_dir)
+        job = import_job(spyglass_url, output_dir)
     except JobImportError as e:
         logger.warning(f"Failed to import job: {e}")
         return
 
-    job = json.loads((job_dir / "job.json").read_text())
-    build_id = job["build_id"]
-    gcs_path = job["gcs_path"]
-    gcsweb_base = job["gcsweb_base"]
-
-    logs_dir = job_dir / "build-logs"
-    if logs_dir.exists():
-        logger.info(f"Build {build_id}: build-logs directory already exists, skipping")
+    failed = job.failed_steps()
+    if failed:
+        count = _download_failed_step_artifacts(job)
+        if count:
+            logger.info(f"Build {job.build_id}: downloaded {count} artifact(s) for failed steps")
     else:
-        failures = _collect_failures(job_dir)
-        if failures:
-            count = download_failed_step_artifacts(gcs_path, gcsweb_base, failures, logs_dir)
-            if count:
-                logger.info(f"Build {build_id}: downloaded {count} artifact(s) for failed steps")
-        else:
-            logger.info(f"Build {build_id}: no failed multi-stage steps found")
+        logger.info(f"Build {job.build_id}: no failed multi-stage steps found")
 
     if auto_must_gather:
         try:
-            download_must_gather(job_dir, gcs_path, gcsweb_base)
+            download_must_gather(job)
         except ArtifactError as e:
-            logger.warning(f"Build {build_id}: {e}")
+            logger.warning(f"Build {job.build_id}: {e}")
 
     if auto_hypershift:
         try:
-            download_hypershift_dumps(job_dir, gcs_path, gcsweb_base)
+            download_hypershift_dumps(job)
         except ArtifactError as e:
-            logger.warning(f"Build {build_id}: {e}")
+            logger.warning(f"Build {job.build_id}: {e}")
 
-    logger.info(f"Completed processing build {build_id}")
+    logger.info(f"Completed processing build {job.build_id}")
