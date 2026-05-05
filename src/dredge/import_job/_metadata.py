@@ -41,23 +41,18 @@ def fetch_step_graph(gcsweb_base, gcs_path):
         return json.loads(body.read().decode())
 
 
-def extract_job_spec(step_graph):
-    for step in step_graph:
-        manifest = step.get("manifest")
-        if not manifest:
-            continue
-        annotations = manifest.get("metadata", {}).get("annotations", {})
-        raw = annotations.get("ci.openshift.io/job-spec")
-        if not raw:
-            continue
-        spec = json.loads(raw)
-        pulls = spec.get("refs", {}).get("pulls", [])
-        return {
-            "job": spec.get("job"),
-            "type": spec.get("type"),
-            "pr_link": pulls[0].get("link") if pulls else None,
-        }
-    raise ValueError("No Pod manifest with ci.openshift.io/job-spec annotation found")
+def fetch_job_spec(gcsweb_base, gcs_path):
+    url = f"{gcsweb_base}{gcs_path}/prowjob.json"
+    with fetch_url(url) as body:
+        data = json.loads(body.read().decode())
+    spec = data.get("spec", {})
+    refs = spec.get("refs", {})
+    pulls = refs.get("pulls", [])
+    return {
+        "job": spec.get("job"),
+        "type": spec.get("type"),
+        "pr_link": pulls[0].get("link") if pulls else None,
+    }
 
 
 def extract_steps(step_graph):

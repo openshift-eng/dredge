@@ -3,7 +3,7 @@ import logging
 import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from .fetch_url import fetch_url, FetchError
 
@@ -31,8 +31,6 @@ class Build:
             commit_link=pull.get("commit_link"),
         )
 
-
-_gcsweb_base_cache = {}
 
 
 def extract_builds(html: str) -> list[dict[str, Any]]:
@@ -95,47 +93,6 @@ def spyglass_to_gcs_path(spyglass_link: str) -> str:
         return spyglass_link[len(prefix_alt):]
     logger.warning(f"Unexpected SpyglassLink format: {spyglass_link}")
     return spyglass_link
-
-
-def discover_gcsweb_base(prow_base_url: str, spyglass_link: str) -> str:
-    """
-    Discover the gcsweb base URL by fetching the Spyglass page and extracting
-    artifact links. Caches the result per prow instance.
-
-    Raises FetchError on network errors.
-    Raises ValueError when gcsweb pattern not found in HTML.
-    """
-    if prow_base_url in _gcsweb_base_cache:
-        return _gcsweb_base_cache[prow_base_url]
-
-    spyglass_url = f"{prow_base_url}{spyglass_link}"
-    logger.info(f"Discovering gcsweb URL from: {spyglass_url}")
-    with fetch_url(spyglass_url) as body:
-        html = body.read().decode()
-
-    gcsweb_pattern = r'(https?://[^"\s]+/gcs/)[^"\s]+'
-    match = re.search(gcsweb_pattern, html)
-
-    if not match:
-        raise ValueError("Could not discover gcsweb URL from Spyglass page")
-
-    gcsweb_base = match.group(1)
-    logger.info(f"Discovered gcsweb base URL: {gcsweb_base}")
-    _gcsweb_base_cache[prow_base_url] = gcsweb_base
-    return gcsweb_base
-
-
-def parse_spyglass_url(url: str) -> tuple[str, str]:
-    """
-    Parse a Spyglass URL into build ID and SpyglassLink path.
-
-    Input:  https://prow.ci.openshift.org/view/gs/bucket/path/BUILD_ID
-    Output: (build_id, "/view/gs/bucket/path/BUILD_ID")
-    """
-    parsed = urlparse(url)
-    path = parsed.path
-    build_id = path.rstrip("/").split("/")[-1]
-    return build_id, path
 
 
 def collect_builds(start_url: str, count: int, failure: bool = False, success: bool = False) -> list[dict[str, Any]]:

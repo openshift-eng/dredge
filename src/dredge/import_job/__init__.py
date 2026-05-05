@@ -29,7 +29,7 @@ def import_job(spyglass_url, output_dir):
     try:
         gcsweb_base = _metadata.discover_gcsweb_base(prow_base_url, spyglass_link)
         step_graph = _metadata.fetch_step_graph(gcsweb_base, gcs_path)
-        job_spec = _metadata.extract_job_spec(step_graph)
+        job_spec = _metadata.fetch_job_spec(gcsweb_base, gcs_path)
         steps = _metadata.extract_steps(step_graph)
         junit_steps = _metadata.fetch_junit_steps(gcsweb_base, gcs_path)
         _metadata.apply_inner_steps(steps, junit_steps)
@@ -61,6 +61,7 @@ def import_job(spyglass_url, output_dir):
         "steps": steps_list,
     }
     (job_dir / "job.json").write_text(json.dumps(job_data, indent=2))
+    (job_dir / "ci-operator-step-graph.json").write_text(json.dumps(step_graph, indent=2))
 
     if first_steps_file:
         steps_symlink = job_dir / "steps.json"

@@ -24,6 +24,10 @@ GCSWEB_BASE = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/"
 def _mock_all():
     responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
     responses.get(
+        f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+        body=(FIXTURES / "prowjob.json").read_bytes(),
+    )
+    responses.get(
         f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
         body=(FIXTURES / "step_graph.json").read_bytes(),
     )

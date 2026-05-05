@@ -12,7 +12,7 @@ A prow job is conceptually a list of executed steps, their artifacts and whether
 - Authenticates if necessary
 - Returns some python interface that can be efficiently streamed from the underlying library (e.g. requests) and consumed flexibly by caller (e.g. write to file, read into a string)
 
-* import_job <spyglass URL> -> local path of job directory
+* DONE: import_job <spyglass URL> -> local path of job directory
 - Creates a local job directory, named by build-id
 - Obtains list of steps as a flat list e.g
   - aws-ipi-disc-priv-f28/aws-deprovision-s3buckets

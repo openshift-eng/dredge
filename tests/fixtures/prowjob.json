@@ -1,0 +1,18 @@
+{
+  "kind": "ProwJob",
+  "apiVersion": "prow.k8s.io/v1",
+  "spec": {
+    "type": "presubmit",
+    "job": "pull-ci-openshift-ci-tools-main-breaking-changes",
+    "refs": {
+      "org": "openshift",
+      "repo": "ci-tools",
+      "pulls": [
+        {
+          "number": 5151,
+          "link": "https://github.com/openshift/ci-tools/pull/5151"
+        }
+      ]
+    }
+  }
+}

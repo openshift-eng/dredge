@@ -13,19 +13,7 @@
     "started_at": "2025-01-15T10:00:00Z",
     "finished_at": "2025-01-15T10:05:00Z",
     "duration": 300000000000,
-    "dependencies": ["[input:root]"],
-    "manifest_type": "Pod",
-    "manifest": {
-      "metadata": {
-        "labels": {
-          "ci.openshift.io/refs.org": "openshift",
-          "ci.openshift.io/refs.repo": "ci-tools"
-        },
-        "annotations": {
-          "ci.openshift.io/job-spec": "{\"type\":\"presubmit\",\"job\":\"pull-ci-openshift-ci-tools-main-breaking-changes\",\"refs\":{\"org\":\"openshift\",\"repo\":\"ci-tools\",\"pulls\":[{\"number\":5151,\"link\":\"https://github.com/openshift/ci-tools/pull/5151\"}]}}"
-        }
-      }
-    }
+    "dependencies": ["[input:root]"]
   },
   {
     "name": "breaking-changes",
@@ -33,14 +21,6 @@
     "started_at": "2025-01-15T10:05:00Z",
     "finished_at": "2025-01-15T10:10:00Z",
     "duration": 300000000000,
-    "dependencies": ["src"],
-    "manifest_type": "Pod",
-    "manifest": {
-      "metadata": {
-        "annotations": {
-          "ci.openshift.io/job-spec": "{\"type\":\"presubmit\",\"job\":\"pull-ci-openshift-ci-tools-main-breaking-changes\",\"refs\":{\"org\":\"openshift\",\"repo\":\"ci-tools\",\"pulls\":[{\"number\":5151,\"link\":\"https://github.com/openshift/ci-tools/pull/5151\"}]}}"
-        }
-      }
-    }
+    "dependencies": ["src"]
   }
 ]

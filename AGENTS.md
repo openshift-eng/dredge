@@ -15,8 +15,11 @@ src/dredge/
     __init__.py             - Public API: fetch_url(), FetchError, NotFoundError
     _auth.py                - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
     _session.py             - requests.Session singleton, retry logic
+  import_job/               - Job import package (creates local job directory from Spyglass URL)
+    __init__.py             - Public API: import_job(), JobImportError
+    _metadata.py            - Spyglass URL parsing, gcsweb discovery, step graph/junit parsing
   prow.py                   - Prow URL handling, build discovery, pagination
-  artifacts.py              - Artifact discovery, download, extraction, build processing
+  artifacts.py              - Artifact download, extraction, downstream operations
   github.py                 - GitHub API integration (PR job fetching)
 ```
 
@@ -27,13 +30,15 @@ src/dredge/
 2. Extract `var allBuilds = [...]` JSON via regex (history mode only)
 3. Filter builds by result (optional: --failure, --success, or both)
 4. For each build:
-   - Convert SpyglassLink to GCS path (strip "/view/gs/" prefix)
-   - **Download junit_operator.xml if not already present**
-   - **Fetch and save ci-operator-step-graph.json if not already present**
-   - **Build step hierarchy from junit + step graph; write build_info.json (with steps, gcs_path, gcsweb_base)**
-   - **Download build-log.txt and junit XML for failed steps (from hierarchy)**
-   - **If --auto-must-gather: discover and download must-gather using step hierarchy**
-   - **If --auto-hypershift: discover and download hypershift dumps using step hierarchy**
+   - **`import_job(spyglass_url, output_dir)` creates the job directory (idempotent)**:
+     - Parse Spyglass URL → build_id, gcs_path, prow_base_url
+     - Discover gcsweb base URL from Spyglass page HTML
+     - Fetch and parse ci-operator-step-graph.json → extract job metadata and top-level steps
+     - Fetch and parse junit_operator.xml → extract inner steps for multi-stage tests
+     - Write `job.json`, `{test}.steps.json`, `steps.json` symlink, `ci-operator-step-graph.json`
+   - **Download build-log.txt and junit XML for failed steps (from `*.steps.json` files)**
+   - **If --auto-must-gather: discover and download must-gather (scan `*.steps.json` for gather-must-gather)**
+   - **If --auto-hypershift: discover and download hypershift dumps (read step graph for dependencies)**
 5. Follow "Older Runs" pagination link if more builds needed (history mode)
 
 ### Authentication
@@ -130,11 +135,11 @@ uv run dredge hypershift-dump ./artifacts/<build_id> e2e-hypershift
 2. Handle 404 gracefully (some builds may not have the artifact)
 
 ### Changing must-gather discovery
-The `artifacts.discover_must_gather()` function uses the step hierarchy (built
-from junit + step graph) to find `gather-must-gather` inner steps, then returns
-a deterministic GCS path without HTTP directory listing. Must-gather is not
-downloaded by default; use `--auto-must-gather` during discovery or the
-`must-gather` subcommand on an existing build directory.
+The `artifacts.discover_must_gather()` function scans `*.steps.json` files in
+the job directory for a `gather-must-gather` key, then returns a deterministic
+GCS path without HTTP directory listing. Must-gather is not downloaded by
+default; use `--auto-must-gather` during discovery or the `must-gather`
+subcommand on an existing build directory.
 
 ### Pagination
 `prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
@@ -146,29 +151,32 @@ references the oldest build on the current page.
 3. Set `set_defaults(func=cmd_newmode)`
 
 ### Incremental Downloads
-The tool skips downloading individual artifacts that already exist:
-- `junit_operator.xml`: Skipped if file exists
-- `ci-operator-step-graph.json`: Skipped if file exists (parsed from cache)
+The `import_job` module is idempotent: if both `job.json` and `steps.json`
+exist in the build directory, it returns immediately without fetching.
+Downstream artifacts also skip if already present:
 - `build-logs/`: Skipped if directory exists
 - `must-gather/`: Skipped if directory exists (both --auto-must-gather and must-gather command)
 - `hypershift-dumps/`: Skipped if directory exists (both --auto-hypershift and hypershift-dump command)
 
-The `build_info.json` metadata file is always updated (including the `steps`
-hierarchy). To force re-download of an artifact, delete that specific file
-or directory.
+To force re-import, delete `job.json` or `steps.json` from the build directory.
 
 ### Build Metadata
-Each build directory contains `build_info.json` with:
+Each build directory contains `job.json` with:
+- `spyglass`: Link to the Prow job page (Spyglass view)
 - `build_id`: The Prow build ID
-- `execution_date`: When the build ran (ISO 8601)
-- `prow_job_link`: Link to the Prow job page (Spyglass view)
-- `pr_link`: GitHub PR URL (if PR job)
-- `commit_link`: GitHub commit URL being tested
+- `job_name`: CI job name
+- `job_type`: Job type (presubmit, postsubmit, periodic)
+- `pr_link`: GitHub PR URL (if PR job, null otherwise)
 - `gcs_path`: GCS bucket path for this build's artifacts (used by standalone commands)
 - `gcsweb_base`: Base URL for gcsweb artifact access (used by standalone commands)
-- `steps`: Hierarchical step structure keyed by test name, each with:
-  - `failed`, `started_at`, `finished_at`, `duration_seconds`, `dependencies`
-  - `inner_steps`: dict of inner step names to `{failed: bool}`
+- `steps`: List of top-level steps, each with:
+  - `name`: Step name
+  - `success`: Whether the step passed
+  - `steps_file`: Filename of inner steps JSON (only for multi-stage tests)
+
+Each multi-stage test also has a `{test}.steps.json` file (dict keyed by
+prefix-stripped inner step name, each with `success: bool`).
+`steps.json` is a symlink to the first multi-stage test's steps file.
 
 ## Error Handling
 
@@ -176,8 +184,8 @@ Each build directory contains `build_info.json` with:
 |----------|--------|
 | Network error | Retry 3x with backoff, then fail |
 | allBuilds not in HTML | Exit with error (page structure changed) |
-| junit_operator.xml 404 | Warn, continue |
-| junit_operator.xml unparseable | Warn, skip failed step artifact download |
+| junit_operator.xml 404 | JobImportError (no inner steps available) |
+| junit_operator.xml unparseable | JobImportError |
 | build-log.txt 404 | Info log (expected), continue |
 | must-gather 404 | Info log (expected), continue |
 | Extraction fails | Warn, keep tar for inspection |

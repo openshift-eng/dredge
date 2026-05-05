@@ -123,25 +123,25 @@ def _resolve_auto_flags(args: argparse.Namespace) -> tuple[bool, bool]:
     return auto_must_gather, auto_hypershift
 
 
-def _load_build_info(build_dir: Path) -> dict[str, Any]:
-    """Load and validate build_info.json from a build directory."""
-    build_info_path = build_dir / "build_info.json"
-    if not build_info_path.exists():
-        logger.error(f"build_info.json not found in {build_dir}")
+def _load_job_info(build_dir: Path) -> dict[str, Any]:
+    """Load and validate job.json from a build directory."""
+    job_json_path = build_dir / "job.json"
+    if not job_json_path.exists():
+        logger.error(f"job.json not found in {build_dir}")
         sys.exit(1)
 
     try:
-        with open(build_info_path) as f:
+        with open(job_json_path) as f:
             info = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
-        logger.error(f"Failed to read build_info.json: {e}")
+        logger.error(f"Failed to read job.json: {e}")
         sys.exit(1)
 
     gcs_path = info.get("gcs_path")
     gcsweb_base = info.get("gcsweb_base")
     if not gcs_path or not gcsweb_base:
         logger.error(
-            f"build_info.json in {build_dir} is missing gcs_path or gcsweb_base. "
+            f"job.json in {build_dir} is missing gcs_path or gcsweb_base. "
             "Re-run a discovery command (history/urls/pr) to update it."
         )
         sys.exit(1)
@@ -183,13 +183,8 @@ def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
     auto_mg, auto_hs = _resolve_auto_flags(args)
 
     for i, url in enumerate(failed_urls, 1):
-        parsed = urlparse(url)
-        prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
-        build_id, spyglass_path = prow.parse_spyglass_url(url)
-        logger.info(f"--- Processing build {i}/{len(failed_urls)} (ID: {build_id}) ---")
-
-        build = prow.Build(id=build_id, spyglass_link=spyglass_path, pr_link=args.pr_url)
-        artifacts.process_build(build, output_dir, prow_base_url,
+        logger.info(f"--- Processing build {i}/{len(failed_urls)} ---")
+        artifacts.process_build(url, output_dir,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
@@ -234,8 +229,9 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     auto_mg, auto_hs = _resolve_auto_flags(args)
 
     for i, build in enumerate(builds, 1):
-        logger.info(f"--- Processing build {i}/{len(builds)} ---")
-        artifacts.process_build(build, output_dir, prow_base_url,
+        spyglass_url = f"{prow_base_url}{build.spyglass_link}"
+        logger.info(f"--- Processing build {i}/{len(builds)} (ID: {build.id}) ---")
+        artifacts.process_build(spyglass_url, output_dir,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
@@ -259,13 +255,9 @@ def cmd_urls(args: argparse.Namespace, output_dir: Path | None) -> None:
             logger.error(f"Invalid URL: {url}")
             continue
 
-        prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
-
-        build_id, spyglass_path = prow.parse_spyglass_url(url)
+        build_id = url.rstrip("/").split("/")[-1]
         logger.info(f"--- Processing build {i}/{len(args.urls)} (ID: {build_id}) ---")
-
-        build = prow.Build(id=build_id, spyglass_link=spyglass_path)
-        artifacts.process_build(build, output_dir, prow_base_url,
+        artifacts.process_build(url, output_dir,
                                 auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
@@ -283,13 +275,12 @@ def cmd_must_gather(args: argparse.Namespace, output_dir: Path | None) -> None:
         logger.error(f"Build directory does not exist: {build_dir}")
         sys.exit(1)
 
-    info = _load_build_info(build_dir)
+    info = _load_job_info(build_dir)
     gcs_path = info["gcs_path"]
     gcsweb_base = info["gcsweb_base"]
-    steps = info.get("steps", {})
 
     try:
-        artifacts.download_must_gather(build_dir, gcs_path, gcsweb_base, steps, args.step_name)
+        artifacts.download_must_gather(build_dir, gcs_path, gcsweb_base, args.step_name)
     except artifacts.ArtifactError as e:
         logger.error(str(e))
         sys.exit(1)
@@ -302,13 +293,12 @@ def cmd_hypershift_dump(args: argparse.Namespace, output_dir: Path | None) -> No
         logger.error(f"Build directory does not exist: {build_dir}")
         sys.exit(1)
 
-    info = _load_build_info(build_dir)
+    info = _load_job_info(build_dir)
     gcs_path = info["gcs_path"]
     gcsweb_base = info["gcsweb_base"]
-    steps = info.get("steps", {})
 
     try:
-        artifacts.download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, steps, args.step_name)
+        artifacts.download_hypershift_dumps(build_dir, gcs_path, gcsweb_base, args.step_name)
     except artifacts.ArtifactError as e:
         logger.error(str(e))
         sys.exit(1)
