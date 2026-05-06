@@ -16,8 +16,12 @@ src/dredge/
     _auth.py                - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
     _session.py             - requests.Session singleton, retry logic
   import_job/               - Job import package (creates local job directory from Spyglass URL)
-    __init__.py             - Public API: import_job(), JobImportError
+    __init__.py             - Public API: import_job(), Job, JobImportError
     _metadata.py            - Spyglass URL parsing, gcsweb discovery, step graph/junit parsing
+  step/                     - Step package (artifact access for individual CI steps)
+    __init__.py             - Public API: Step
+    _step.py                - Step class: get_log(), list_artifacts(), get_artifact()
+    _gcsweb.py              - gcsweb download and directory listing helpers
   prow.py                   - Prow URL handling, build discovery, pagination
   artifacts.py              - Artifact download, extraction, downstream operations
   github.py                 - GitHub API integration (PR job fetching)
@@ -30,14 +34,14 @@ src/dredge/
 2. Extract `var allBuilds = [...]` JSON via regex (history mode only)
 3. Filter builds by result (optional: --failure, --success, or both)
 4. For each build:
-   - **`import_job(spyglass_url, output_dir)` creates the job directory (idempotent)**:
+   - **`import_job(spyglass_url, output_dir)` creates the job directory and returns a `Job` (idempotent)**:
      - Parse Spyglass URL → build_id, gcs_path, prow_base_url
      - Discover gcsweb base URL from Spyglass page HTML
      - Fetch and parse ci-operator-step-graph.json → extract job metadata and top-level steps
      - Fetch and parse junit_operator.xml → extract inner steps for multi-stage tests
-     - Write `job.json`, `{test}.steps.json`, `steps.json` symlink, `ci-operator-step-graph.json`
-   - **Download build-log.txt and junit XML for failed steps (from `*.steps.json` files)**
-   - **If --auto-must-gather: discover and download must-gather (scan `*.steps.json` for gather-must-gather)**
+     - Write `job.json`, `steps.json`, `ci-operator-step-graph.json`
+   - **Download build-log.txt and junit XML for failed steps (via `job.failed_steps()` and `Step` methods)**
+   - **If --auto-must-gather: discover and download must-gather (scan steps for gather-must-gather substep)**
    - **If --auto-hypershift: discover and download hypershift dumps (read step graph for dependencies)**
 5. Follow "Older Runs" pagination link if more builds needed (history mode)
 
@@ -135,11 +139,11 @@ uv run dredge hypershift-dump ./artifacts/<build_id> e2e-hypershift
 2. Handle 404 gracefully (some builds may not have the artifact)
 
 ### Changing must-gather discovery
-The `artifacts.discover_must_gather()` function scans `steps.json`
-for steps with a `gather-must-gather` substep, then returns a deterministic
-GCS path without HTTP directory listing. Must-gather is not downloaded by
-default; use `--auto-must-gather` during discovery or the `must-gather`
-subcommand on an existing build directory.
+`artifacts.download_must_gather(job)` iterates top-level steps looking for a
+`gather-must-gather` substep via `job.step(name, "gather-must-gather")`, then
+downloads via `step.get_artifact("must-gather.tar")`. Must-gather is not
+downloaded by default; use `--auto-must-gather` during discovery or the
+`must-gather` subcommand on an existing build directory.
 
 ### Pagination
 `prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
@@ -152,26 +156,30 @@ references the oldest build on the current page.
 
 ### Incremental Downloads
 The `import_job` module is idempotent: if both `job.json` and `steps.json`
-exist in the build directory, it returns immediately without fetching.
-Downstream artifacts also skip if already present:
-- `build-logs/`: Skipped if directory exists
+exist in the build directory, it returns a `Job` immediately without fetching.
+Individual artifact downloads are also idempotent:
+- `step.get_log()`: Skipped if `build-log.txt` already exists on disk
+- `step.get_artifact(path)`: Skipped if the artifact file already exists on disk
 - `must-gather/`: Skipped if directory exists (both --auto-must-gather and must-gather command)
 - `hypershift-dumps/`: Skipped if directory exists (both --auto-hypershift and hypershift-dump command)
 
 To force re-import, delete `job.json` or `steps.json` from the build directory.
 
 ### Build Metadata
-Each build directory contains `job.json` with:
+Each build directory contains `job.json` and `steps.json`, loaded by `Job(job_dir)`.
+`job.json` fields (also available as `Job` attributes):
 - `spyglass`: Link to the Prow job page (Spyglass view)
 - `build_id`: The Prow build ID
 - `job_name`: CI job name
 - `job_type`: Job type (presubmit, postsubmit, periodic)
 - `pr_link`: GitHub PR URL (if PR job, null otherwise)
-- `gcs_path`: GCS bucket path for this build's artifacts (used by standalone commands)
-- `gcsweb_base`: Base URL for gcsweb artifact access (used by standalone commands)
+- `gcs_path`: GCS bucket path for this build's artifacts
+- `gcsweb_base`: Base URL for gcsweb artifact access
 `steps.json` contains a recursive step hierarchy keyed by step name.
 Each entry has `success: bool`. Multi-stage tests also have
 `substeps: { inner_step_name: { success: bool }, ... }`.
+Use `job.step(name)` or `job.step(name, inner_name)` to get `Step` objects.
+Use `job.failed_steps()` to get all failed inner steps as `Step` objects.
 
 ## Error Handling
 

@@ -2,7 +2,6 @@ import json
 import logging
 import tarfile
 from pathlib import Path
-from typing import Any
 
 from .fetch_url import FetchError
 from .import_job import import_job, Job, JobImportError
