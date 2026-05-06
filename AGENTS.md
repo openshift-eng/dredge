@@ -6,23 +6,23 @@ Downloads artifacts from Prow CI jobs for analysis.
 ## Project Layout
 
 ```
-pyproject.toml              - Project metadata and dependencies (uv/hatch)
+pyproject.toml              - Project metadata, dependencies, and tool config (uv/hatch)
+Makefile                    - Dev task runner (lint, format, typecheck, test)
 src/dredge/
   __init__.py
   __main__.py               - python -m dredge entry point
   cli.py                    - CLI argument parsing, command handlers, main()
-  fetch_url/                - HTTP fetching package (encapsulates requests library)
+  py.typed                  - PEP 561 type information marker
+  fetcher/                  - HTTP fetching package (encapsulates requests library)
     __init__.py             - Public API: fetch_url(), FetchError, NotFoundError
     _auth.py                - OAuth proxy detection, auth chain follower, Kerberos, cookie cache
     _session.py             - requests.Session singleton, retry logic
-  import_job/               - Job import package (creates local job directory from Spyglass URL)
-    __init__.py             - Public API: import_job(), Job, JobImportError
+  prow/                     - Prow job handling package
+    __init__.py             - Public API: import_from_spyglass(), Job, JobImportError, Step
     _metadata.py            - Spyglass URL parsing, gcsweb discovery, step graph/junit parsing
-  step/                     - Step package (artifact access for individual CI steps)
-    __init__.py             - Public API: Step
     _step.py                - Step class: get_log(), list_artifacts(), get_artifact()
     _gcsweb.py              - gcsweb download and directory listing helpers
-  prow.py                   - Prow URL handling, build discovery, pagination
+  discovery.py              - Prow URL handling, build discovery, pagination
   artifacts.py              - Artifact download, extraction, downstream operations
   github.py                 - GitHub API integration (PR job fetching)
 ```
@@ -34,7 +34,7 @@ src/dredge/
 2. Extract `var allBuilds = [...]` JSON via regex (history mode only)
 3. Filter builds by result (optional: --failure, --success, or both)
 4. For each build:
-   - **`import_job(spyglass_url, output_dir)` creates the job directory and returns a `Job` (idempotent)**:
+   - **`import_from_spyglass(spyglass_url, output_dir)` creates the job directory and returns a `Job` (idempotent)**:
      - Parse Spyglass URL → build_id, gcs_path, prow_base_url
      - Discover gcsweb base URL from Spyglass page HTML
      - Fetch and parse ci-operator-step-graph.json → extract job metadata and top-level steps
@@ -57,7 +57,7 @@ using an existing Kerberos ticket. No user interaction required.
 - **Cookie cache**: `~/.config/dredge/cookies/<domain>.json` — cached per-domain, cleared per-domain on expiry
 - **Loop detection**: keyed on `(method, url, domain-scoped cookies)` — allows legitimate OAuth revisits where server-side state has changed
 
-The concrete 14-step auth chain is documented in a comment at the top of `src/dredge/fetch_url/_auth.py`.
+The concrete 14-step auth chain is documented in a comment at the top of `src/dredge/fetcher/_auth.py`.
 
 ### Key URL Transformations
 - SpyglassLink: `/view/gs/BUCKET/PATH` -> GCS path: `BUCKET/PATH`
@@ -132,6 +132,34 @@ uv run dredge hypershift-dump ./artifacts/<build_id> e2e-hypershift
 ### Global Options
 - `--trusted-redirect-domain`: Additional trusted domain for auth redirects (may be repeated; prefix with `.` for suffix match)
 
+## Code Quality Requirements
+
+All code changes must pass `make check` (lint + typecheck + test) before they are considered complete.
+
+**Linting and formatting** — Ruff enforces style and catches bugs:
+```bash
+make lint                   # check for lint errors
+make format                 # auto-format code
+```
+Ruff configuration is in `pyproject.toml` under `[tool.ruff]`. The enabled rule sets are: pycodestyle, pyflakes, isort, pyupgrade, bugbear, simplify, and ruff-specific rules. Line length limit is 100.
+
+**Type checking** — mypy runs in gradual mode:
+```bash
+make typecheck              # run mypy
+```
+New code must include type annotations. Existing untyped code in `fetcher/` and `prow/` is grandfathered but should be annotated when modified. mypy configuration is in `pyproject.toml` under `[tool.mypy]`.
+
+**Tests** — pytest with the `responses` library for HTTP mocking:
+```bash
+make test                   # run test suite
+```
+Test files live in `tests/`. New functionality should include tests.
+
+**Full check** — run all of the above in sequence:
+```bash
+make check                  # lint + typecheck + test
+```
+
 ## Common Modifications
 
 ### Adding new artifact types
@@ -146,7 +174,7 @@ downloaded by default; use `--auto-must-gather` during discovery or the
 `must-gather` subcommand on an existing build directory.
 
 ### Pagination
-`prow.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
+`discovery.get_next_page_url()` extracts the "Older Runs" link. The buildId query parameter
 references the oldest build on the current page.
 
 ### Adding new subcommands
@@ -155,7 +183,7 @@ references the oldest build on the current page.
 3. Set `set_defaults(func=cmd_newmode)`
 
 ### Incremental Downloads
-The `import_job` module is idempotent: if both `job.json` and `steps.json`
+The `prow.import_from_spyglass()` function is idempotent: if both `job.json` and `steps.json`
 exist in the build directory, it returns a `Job` immediately without fetching.
 Individual artifact downloads are also idempotent:
 - `step.get_log()`: Skipped if `build-log.txt` already exists on disk
@@ -248,3 +276,9 @@ The artifacts this tool downloads are produced by `ci-operator` in [openshift/ci
 - Python 3.10+
 - `requests` library (managed via pyproject.toml / uv)
 - `gssapi` (optional, for Kerberos auth): `uv sync --extra kerberos`
+
+### Dev Dependencies
+Installed via `uv sync --dev`:
+- `pytest` + `responses` — testing
+- `ruff` — linting and formatting
+- `mypy` + `types-requests` — type checking

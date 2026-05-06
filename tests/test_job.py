@@ -135,16 +135,19 @@ class TestFailedSteps:
 
     def test_empty_when_all_pass(self, tmp_path):
         job_dir = tmp_path / "9999"
-        _write_job_files(job_dir, steps={
-            "src": {"success": True},
-            "e2e-aws": {
-                "success": True,
-                "substeps": {
-                    "setup": {"success": True},
-                    "openshift-e2e-test": {"success": True},
+        _write_job_files(
+            job_dir,
+            steps={
+                "src": {"success": True},
+                "e2e-aws": {
+                    "success": True,
+                    "substeps": {
+                        "setup": {"success": True},
+                        "openshift-e2e-test": {"success": True},
+                    },
                 },
             },
-        })
+        )
         job = Job(job_dir)
 
         assert job.failed_steps() == []

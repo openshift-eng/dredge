@@ -3,16 +3,15 @@ import re
 import shutil
 from urllib.parse import urlparse
 
-from ..fetcher import fetch_url, NotFoundError
+from ..fetcher import NotFoundError, fetch_url
 
 logger = logging.getLogger(__name__)
 
 
 def download(url, dest):
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with fetch_url(url) as body:
-        with open(dest, "wb") as f:
-            shutil.copyfileobj(body, f)
+    with fetch_url(url) as body, open(dest, "wb") as f:
+        shutil.copyfileobj(body, f)
     logger.info(f"Downloaded to: {dest}")
 
 

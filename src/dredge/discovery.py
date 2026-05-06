@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 
-from .fetcher import fetch_url, FetchError
+from .fetcher import FetchError, fetch_url
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,6 @@ class Build:
         )
 
 
-
 def extract_builds(html: str) -> list[dict[str, Any]]:
     """Extract allBuilds JSON from job history page HTML."""
     pattern = r"var\s+allBuilds\s*=\s*(\[.*?\]);"
@@ -41,14 +40,16 @@ def extract_builds(html: str) -> list[dict[str, Any]]:
         raise ValueError("Could not find 'var allBuilds' in page HTML")
 
     try:
-        builds = json.loads(match.group(1))
+        builds: list[dict[str, Any]] = json.loads(match.group(1))
         logger.info(f"Found {len(builds)} builds on page")
         return builds
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse allBuilds JSON: {e}") from e
 
 
-def filter_builds(builds: list[dict[str, Any]], failure: bool = False, success: bool = False) -> list[dict[str, Any]]:
+def filter_builds(
+    builds: list[dict[str, Any]], failure: bool = False, success: bool = False
+) -> list[dict[str, Any]]:
     """
     Filter builds by result.
 
@@ -67,7 +68,9 @@ def filter_builds(builds: list[dict[str, Any]], failure: bool = False, success: 
         allowed.add("SUCCESS")
 
     filtered = [b for b in builds if b.get("Result") in allowed]
-    logger.info(f"Found {len(filtered)} builds matching filter (failure={failure}, success={success})")
+    logger.info(
+        f"Found {len(filtered)} builds matching filter (failure={failure}, success={success})"
+    )
     return filtered
 
 
@@ -76,7 +79,7 @@ def get_next_page_url(html: str, current_url: str) -> str | None:
     pattern = r'<a\s+href="([^"]+)"[^>]*>[^<]*Older\s+Runs[^<]*</a>'
     match = re.search(pattern, html, re.IGNORECASE)
     if match:
-        relative_url = match.group(1)
+        relative_url: str = match.group(1)
         next_url = urljoin(current_url, relative_url)
         logger.info(f"Found 'Older Runs' link: {next_url}")
         return next_url
@@ -87,17 +90,19 @@ def spyglass_to_gcs_path(spyglass_link: str) -> str:
     """Convert SpyglassLink to GCS path by stripping '/view/gs/' prefix."""
     prefix = "/view/gs/"
     if spyglass_link.startswith(prefix):
-        return spyglass_link[len(prefix):]
+        return spyglass_link[len(prefix) :]
     prefix_alt = "/view/gcs/"
     if spyglass_link.startswith(prefix_alt):
-        return spyglass_link[len(prefix_alt):]
+        return spyglass_link[len(prefix_alt) :]
     logger.warning(f"Unexpected SpyglassLink format: {spyglass_link}")
     return spyglass_link
 
 
-def collect_builds(start_url: str, count: int, failure: bool = False, success: bool = False) -> list[dict[str, Any]]:
+def collect_builds(
+    start_url: str, count: int, failure: bool = False, success: bool = False
+) -> list[dict[str, Any]]:
     """Paginate through job history to collect N builds matching filters."""
-    builds_collected = []
+    builds_collected: list[dict[str, Any]] = []
     current_url = start_url
 
     while len(builds_collected) < count:
@@ -127,8 +132,6 @@ def collect_builds(start_url: str, count: int, failure: bool = False, success: b
         current_url = next_url
 
     if len(builds_collected) < count:
-        logger.warning(
-            f"Requested {count} builds but only found {len(builds_collected)} available"
-        )
+        logger.warning(f"Requested {count} builds but only found {len(builds_collected)} available")
 
     return builds_collected[:count]

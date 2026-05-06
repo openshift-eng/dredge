@@ -4,7 +4,7 @@ import requests
 
 from . import _session
 
-__all__ = ["fetch_url", "FetchError", "NotFoundError"]
+__all__ = ["FetchError", "NotFoundError", "fetch_url"]
 
 
 class FetchError(Exception):

@@ -16,13 +16,15 @@ def get_github_token() -> str:
         return subprocess.check_output(
             ["gh", "auth", "token"], stderr=subprocess.DEVNULL, text=True
         ).strip()
-    except FileNotFoundError:
-        raise TokenError("gh CLI not found; install GitHub CLI to authenticate")
-    except subprocess.CalledProcessError:
-        raise TokenError("gh CLI not logged in; run 'gh auth login'")
+    except FileNotFoundError as err:
+        raise TokenError("gh CLI not found; install GitHub CLI to authenticate") from err
+    except subprocess.CalledProcessError as err:
+        raise TokenError("gh CLI not logged in; run 'gh auth login'") from err
 
 
-def fetch_failed_pr_jobs(owner: str, repo: str, pr_number: str, token: str | None = None) -> list[str]:
+def fetch_failed_pr_jobs(
+    owner: str, repo: str, pr_number: str, token: str | None = None
+) -> list[str]:
     """Fetch failed prow job URLs for a GitHub PR using the commit statuses API."""
     headers = {"Accept": "application/vnd.github+json"}
     if token:

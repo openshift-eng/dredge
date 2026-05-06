@@ -25,6 +25,7 @@
 # session cookie — loop detection allows this (different cookies = different key).
 
 import base64
+import contextlib
 import json
 import logging
 import re
@@ -36,6 +37,7 @@ import requests
 
 try:
     import gssapi
+
     _HAS_KERBEROS = True
 except ImportError:
     _HAS_KERBEROS = False
@@ -95,12 +97,14 @@ def _extract_form_redirect(response):
 
     form_match = re.search(
         r"<form[^>]*\bmethod=[\"'](\w+)[\"'][^>]*\baction=[\"']([^\"']+)[\"']",
-        html, re.I,
+        html,
+        re.I,
     )
     if not form_match:
         form_match = re.search(
             r"<form[^>]*\baction=[\"']([^\"']+)[\"'][^>]*\bmethod=[\"'](\w+)[\"']",
-            html, re.I,
+            html,
+            re.I,
         )
         if not form_match:
             return None
@@ -133,10 +137,7 @@ def _extract_form_redirect(response):
 def _extract_link_redirect(response):
     html = response.text
     hrefs = re.findall(r"href=[\"']([^\"']+)[\"']", html)
-    links = [
-        h for h in hrefs
-        if not h.startswith(("data:", "#", "javascript:"))
-    ]
+    links = [h for h in hrefs if not h.startswith(("data:", "#", "javascript:"))]
     if len(links) == 1:
         url = urljoin(response.url, html_unescape(links[0]))
         return ("GET", url, None)
@@ -172,7 +173,8 @@ def _follow_auth_chain(start_url):
 
     for hop in range(_MAX_AUTH_HOPS):
         domain_cookies = frozenset(
-            (c.name, c.value) for c in session.cookies
+            (c.name, c.value)
+            for c in session.cookies
             if c.domain and urlparse(url).hostname.endswith(c.domain.lstrip("."))
         )
         key = (method, url, domain_cookies)
@@ -182,7 +184,11 @@ def _follow_auth_chain(start_url):
 
         logger.debug(f"Auth chain hop {hop + 1}: {method} {url}")
         response = session.request(
-            method, url, data=data, allow_redirects=False, timeout=30,
+            method,
+            url,
+            data=data,
+            allow_redirects=False,
+            timeout=30,
         )
 
         if response.is_redirect:
@@ -198,8 +204,7 @@ def _follow_auth_chain(start_url):
                 hostname = urlparse(url).hostname
                 if hostname != _KERBEROS_DOMAIN:
                     raise AuthenticationError(
-                        f"Kerberos requested by {hostname}, "
-                        f"but only {_KERBEROS_DOMAIN} is allowed"
+                        f"Kerberos requested by {hostname}, but only {_KERBEROS_DOMAIN} is allowed"
                     )
                 token = _generate_kerberos_token(hostname)
                 if not token:
@@ -208,13 +213,14 @@ def _follow_auth_chain(start_url):
                             "Kerberos authentication required but gssapi is not installed. "
                             "Install with: uv sync --extra kerberos"
                         )
-                    raise AuthenticationError(
-                        "No valid Kerberos ticket. Run 'kinit' and retry."
-                    )
+                    raise AuthenticationError("No valid Kerberos ticket. Run 'kinit' and retry.")
                 response = session.request(
-                    method, url, data=data,
+                    method,
+                    url,
+                    data=data,
                     headers={"Authorization": f"Negotiate {token}"},
-                    allow_redirects=False, timeout=30,
+                    allow_redirects=False,
+                    timeout=30,
                 )
                 if response.is_redirect:
                     url = urljoin(url, response.headers["Location"])
@@ -225,9 +231,7 @@ def _follow_auth_chain(start_url):
                 raise AuthenticationError(
                     f"Kerberos rejected by {hostname} (status {response.status_code})"
                 )
-            raise AuthenticationError(
-                f"Unsupported authentication method at {url}: {www_auth}"
-            )
+            raise AuthenticationError(f"Unsupported authentication method at {url}: {www_auth}")
 
         redirect = _extract_scraped_redirect(response)
         if redirect:
@@ -239,9 +243,7 @@ def _follow_auth_chain(start_url):
             if cookie.name == "_oauth_proxy":
                 return session
 
-        raise AuthenticationError(
-            f"Auth chain stuck at {url} (status {response.status_code})"
-        )
+        raise AuthenticationError(f"Auth chain stuck at {url} (status {response.status_code})")
 
     raise AuthenticationError(f"Too many redirects ({_MAX_AUTH_HOPS})")
 
@@ -283,10 +285,8 @@ def authenticate_session(session, failed_response, url):
         logger.info(f"Cached cookies expired for {domain}")
         _clear_cached_cookies(domain)
         for name in cached:
-            try:
+            with contextlib.suppress(KeyError):
                 session.cookies.clear(domain=domain, path="/", name=name)
-            except KeyError:
-                pass
 
     redirect = _extract_scraped_redirect(failed_response)
     if not redirect:
@@ -305,8 +305,10 @@ def authenticate_session(session, failed_response, url):
         if cookie.domain and domain in cookie.domain:
             cookies[cookie.name] = cookie.value
             session.cookies.set(
-                cookie.name, cookie.value,
-                domain=cookie.domain, path=cookie.path,
+                cookie.name,
+                cookie.value,
+                domain=cookie.domain,
+                path=cookie.path,
             )
 
     if "_oauth_proxy" not in cookies:

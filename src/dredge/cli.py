@@ -7,9 +7,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from . import artifacts
-from . import discovery
-from . import github
+from . import artifacts, discovery, github
 from .fetcher import _auth
 from .prow import Job
 
@@ -34,7 +32,8 @@ def parse_args() -> argparse.Namespace:
         "--trusted-redirect-domain",
         action="append",
         default=[],
-        help="Additional trusted domain for auth redirects (may be repeated; prefix with '.' for suffix match)",
+        help="Additional trusted domain for auth redirects "
+        "(may be repeated; prefix with '.' for suffix match)",
     )
 
     discovery_parent = argparse.ArgumentParser(add_help=False)
@@ -94,7 +93,9 @@ def parse_args() -> argparse.Namespace:
         parents=[discovery_parent],
         help="Download failed prow jobs from a GitHub PR",
     )
-    pr_parser.add_argument("pr_url", help="GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)")
+    pr_parser.add_argument(
+        "pr_url", help="GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)"
+    )
     pr_parser.set_defaults(func=cmd_pr)
 
     mg_parser = subparsers.add_parser(
@@ -102,7 +103,9 @@ def parse_args() -> argparse.Namespace:
         help="Download must-gather from an existing build directory",
     )
     mg_parser.add_argument("build_dir", type=Path, help="Path to an existing build directory")
-    mg_parser.add_argument("step_name", nargs="?", default=None, help="Step name (guessed if omitted)")
+    mg_parser.add_argument(
+        "step_name", nargs="?", default=None, help="Step name (guessed if omitted)"
+    )
     mg_parser.set_defaults(func=cmd_must_gather)
 
     hs_parser = subparsers.add_parser(
@@ -110,7 +113,9 @@ def parse_args() -> argparse.Namespace:
         help="Download hypershift hosted cluster dumps from an existing build directory",
     )
     hs_parser.add_argument("build_dir", type=Path, help="Path to an existing build directory")
-    hs_parser.add_argument("step_name", nargs="?", default=None, help="Step name (guessed if omitted)")
+    hs_parser.add_argument(
+        "step_name", nargs="?", default=None, help="Step name (guessed if omitted)"
+    )
     hs_parser.set_defaults(func=cmd_hypershift_dump)
 
     return parser.parse_args()
@@ -136,6 +141,7 @@ def _load_job(build_dir: Path) -> Job:
 
 def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'pr' subcommand."""
+    assert output_dir is not None
     match = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", args.pr_url)
     if not match:
         logger.error(f"Invalid GitHub PR URL: {args.pr_url}")
@@ -148,8 +154,10 @@ def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
         token = github.get_github_token()
     except github.TokenError:
         token = None
-        logger.warning("No GitHub token found (gh CLI not available or not logged in). "
-                        "Using unauthenticated requests (rate-limited).")
+        logger.warning(
+            "No GitHub token found (gh CLI not available or not logged in). "
+            "Using unauthenticated requests (rate-limited)."
+        )
 
     try:
         failed_urls = github.fetch_failed_pr_jobs(owner, repo, pr_number, token)
@@ -169,8 +177,7 @@ def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
 
     for i, url in enumerate(failed_urls, 1):
         logger.info(f"--- Processing build {i}/{len(failed_urls)} ---")
-        artifacts.process_build(url, output_dir,
-                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
+        artifacts.process_build(url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
         artifacts.write_agents_md(output_dir)
@@ -181,6 +188,7 @@ def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
 
 def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'history' subcommand."""
+    assert output_dir is not None
     parsed = urlparse(args.url)
     if not parsed.scheme or not parsed.netloc:
         logger.error("Invalid URL provided")
@@ -202,7 +210,9 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     logger.info(f"Starting download of {args.count} builds{filter_str} from: {args.url}")
     logger.info(f"Output directory: {output_dir.absolute()}")
 
-    raw_builds = discovery.collect_builds(args.url, args.count, failure=args.failure, success=args.success)
+    raw_builds = discovery.collect_builds(
+        args.url, args.count, failure=args.failure, success=args.success
+    )
 
     if not raw_builds:
         logger.warning("No builds found matching criteria")
@@ -216,8 +226,9 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     for i, build in enumerate(builds, 1):
         spyglass_url = f"{prow_base_url}{build.spyglass_link}"
         logger.info(f"--- Processing build {i}/{len(builds)} (ID: {build.id}) ---")
-        artifacts.process_build(spyglass_url, output_dir,
-                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
+        artifacts.process_build(
+            spyglass_url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs
+        )
 
     try:
         artifacts.write_agents_md(output_dir)
@@ -229,6 +240,7 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
 
 def cmd_urls(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'urls' subcommand."""
+    assert output_dir is not None
     logger.info(f"Downloading {len(args.urls)} builds by URL")
     logger.info(f"Output directory: {output_dir.absolute()}")
 
@@ -242,8 +254,7 @@ def cmd_urls(args: argparse.Namespace, output_dir: Path | None) -> None:
 
         build_id = url.rstrip("/").split("/")[-1]
         logger.info(f"--- Processing build {i}/{len(args.urls)} (ID: {build_id}) ---")
-        artifacts.process_build(url, output_dir,
-                                auto_must_gather=auto_mg, auto_hypershift=auto_hs)
+        artifacts.process_build(url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
         artifacts.write_agents_md(output_dir)

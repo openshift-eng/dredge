@@ -6,7 +6,7 @@ from ..fetcher import FetchError
 from . import _metadata
 from ._step import Step
 
-__all__ = ["import_from_spyglass", "Job", "JobImportError", "Step"]
+__all__ = ["Job", "JobImportError", "Step", "import_from_spyglass"]
 
 logger = logging.getLogger(__name__)
 

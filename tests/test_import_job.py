@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import responses
 
-from dredge.prow import import_from_spyglass, Job, JobImportError
+from dredge.prow import Job, JobImportError, import_from_spyglass
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

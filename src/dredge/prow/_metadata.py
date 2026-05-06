@@ -21,7 +21,7 @@ def extract_prow_base_url(url):
 def spyglass_to_gcs_path(spyglass_link):
     for prefix in ("/view/gs/", "/view/gcs/"):
         if spyglass_link.startswith(prefix):
-            return spyglass_link[len(prefix):]
+            return spyglass_link[len(prefix) :]
     return spyglass_link
 
 
@@ -61,11 +61,13 @@ def extract_steps(step_graph):
         name = s.get("name", "")
         if name.startswith("["):
             continue
-        steps.append({
-            "name": name,
-            "success": not s.get("failed", False),
-            "inner_steps": {},
-        })
+        steps.append(
+            {
+                "name": name,
+                "success": not s.get("failed", False),
+                "inner_steps": {},
+            }
+        )
     return steps
 
 
@@ -77,7 +79,7 @@ def fetch_junit_steps(gcsweb_base, gcs_path):
         xml_text = body.read().decode()
 
     root = ET.fromstring(xml_text)
-    steps = {}
+    steps: dict[str, dict[str, object]] = {}
 
     for tc in root.iter("testcase"):
         name = tc.get("name", "")
@@ -86,7 +88,7 @@ def fetch_junit_steps(gcsweb_base, gcs_path):
             continue
         test_name, full_step = m.group(1), m.group(2)
         prefix = test_name + "-"
-        inner_step = full_step[len(prefix):] if full_step.startswith(prefix) else full_step
+        inner_step = full_step[len(prefix) :] if full_step.startswith(prefix) else full_step
         failed = tc.find("failure") is not None
         steps.setdefault(test_name, {})[inner_step] = {"success": not failed}
 

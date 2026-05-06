@@ -4,7 +4,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 import responses
 import urllib3
 
@@ -25,17 +24,15 @@ class TestFetchUrl:
     def test_raises_not_found_error_on_404(self):
         responses.get("http://example.com/missing", status=404)
 
-        with pytest.raises(NotFoundError):
-            with fetch_url("http://example.com/missing") as body:
-                body.read()
+        with pytest.raises(NotFoundError), fetch_url("http://example.com/missing") as body:
+            body.read()
 
     @responses.activate
     def test_raises_fetch_error_on_server_error(self):
         responses.get("http://example.com/broken", status=500)
 
-        with pytest.raises(FetchError):
-            with fetch_url("http://example.com/broken") as body:
-                body.read()
+        with pytest.raises(FetchError), fetch_url("http://example.com/broken") as body:
+            body.read()
 
     @responses.activate
     @patch("dredge.fetcher._session.time.sleep")
@@ -62,9 +59,8 @@ class TestFetchUrl:
                 body=responses.ConnectionError("refused"),
             )
 
-        with pytest.raises(FetchError):
-            with fetch_url("http://example.com/down") as body:
-                body.read()
+        with pytest.raises(FetchError), fetch_url("http://example.com/down") as body:
+            body.read()
 
     def test_decodes_gzip_content_encoding(self):
         compressed = gzip.compress(b"hello gzipped")
@@ -78,9 +74,11 @@ class TestFetchUrl:
         mock_response.status_code = 200
         mock_response.raw = raw
 
-        with patch("dredge.fetcher._session.get", return_value=mock_response):
-            with fetch_url("http://example.com/gzipped") as body:
-                assert body.read() == b"hello gzipped"
+        with (
+            patch("dredge.fetcher._session.get", return_value=mock_response),
+            fetch_url("http://example.com/gzipped") as body,
+        ):
+            assert body.read() == b"hello gzipped"
 
     @responses.activate
     def test_stream_is_closed_after_context_exit(self):
@@ -170,7 +168,9 @@ class TestFetchUrl:
         responses.get(
             f"{oauth_base}/oauth2callback/RedHat_Internal_SSO",
             status=302,
-            headers={"Location": f"{oauth_base}/oauth/authorize?client_id=test&idp=RedHat_Internal_SSO"},
+            headers={
+                "Location": f"{oauth_base}/oauth/authorize?client_id=test&idp=RedHat_Internal_SSO"
+            },
         )
 
         # 11. OAuth authorize (revisit with session) → 302 to proxy callback
@@ -196,11 +196,13 @@ class TestFetchUrl:
         # 12. Retry original request with auth cookies → 200
         responses.get(f"{base}/page", body=b"authenticated")
 
-        with patch("dredge.fetcher._auth._generate_kerberos_token", return_value="fake-token"):
-            with patch("dredge.fetcher._auth._save_cookies"):
-                with patch("dredge.fetcher._auth._load_cached_cookies", return_value=None):
-                    with fetch_url(f"{base}/page") as body:
-                        assert body.read() == b"authenticated"
+        with (
+            patch("dredge.fetcher._auth._generate_kerberos_token", return_value="fake-token"),
+            patch("dredge.fetcher._auth._save_cookies"),
+            patch("dredge.fetcher._auth._load_cached_cookies", return_value=None),
+            fetch_url(f"{base}/page") as body,
+        ):
+            assert body.read() == b"authenticated"
 
     def test_public_api_is_restricted(self):
         import dredge.fetcher as module

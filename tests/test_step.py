@@ -94,10 +94,10 @@ class TestListArtifacts:
         url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/junit/"
         gcs_prefix = f"/gcs/{GCS_PATH}/artifacts/{step.name}/artifacts/junit"
         html = (
-            f'<html><ul>'
+            f"<html><ul>"
             f'<li><a href="/gcs/{GCS_PATH}/artifacts/{step.name}/artifacts/">..</a></li>'
             f'<li><a href="{gcs_prefix}/results.xml">results.xml</a></li>'
-            f'</ul></html>'
+            f"</ul></html>"
         )
         responses.get(url, body=html.encode())
 

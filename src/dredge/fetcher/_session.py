@@ -43,4 +43,4 @@ def get(url):
                 wait = _BACKOFF ** (attempt + 1)
                 logger.warning(f"Request failed. Retrying in {wait}s...")
                 time.sleep(wait)
-    raise last_exc
+    raise last_exc  # type: ignore[misc]
