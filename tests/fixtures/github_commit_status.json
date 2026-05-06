@@ -1,0 +1,47 @@
+{
+  "state": "failure",
+  "statuses": [
+    {
+      "url": "https://api.github.com/repos/openshift/cluster-capi-operator/statuses/a9f632b5299ee9512e35a610ba3fe495d64df6b8",
+      "id": 46875748140,
+      "state": "success",
+      "description": "Job succeeded.\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001 BaseSHA:4378d2d7de5e285b616ba509bd8837009a6f00b1",
+      "target_url": "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/openshift_cluster-capi-operator/547/pull-ci-openshift-cluster-capi-operator-main-verify-deps/2051222748235042816",
+      "context": "ci/prow/verify-deps"
+    },
+    {
+      "url": "https://api.github.com/repos/openshift/cluster-capi-operator/statuses/a9f632b5299ee9512e35a610ba3fe495d64df6b8",
+      "id": 46875750785,
+      "state": "success",
+      "description": "Job succeeded.\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001 BaseSHA:4378d2d7de5e285b616ba509bd8837009a6f00b1",
+      "target_url": "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/openshift_cluster-capi-operator/547/pull-ci-openshift-cluster-capi-operator-main-vendor/2051222748197294080",
+      "context": "ci/prow/vendor"
+    },
+    {
+      "url": "https://api.github.com/repos/openshift/cluster-capi-operator/statuses/a9f632b5299ee9512e35a610ba3fe495d64df6b8",
+      "id": 46883371486,
+      "state": "failure",
+      "description": "Job failed.\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001\u2001 BaseSHA:4378d2d7de5e285b616ba509bd8837009a6f00b1",
+      "target_url": "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/openshift_cluster-capi-operator/547/pull-ci-openshift-cluster-capi-operator-main-e2e-aws-capi-disconnected-techpreview/2051228952390799360",
+      "context": "ci/prow/e2e-aws-capi-disconnected-techpreview"
+    },
+    {
+      "url": "https://api.github.com/repos/openshift/cluster-capi-operator/statuses/a9f632b5299ee9512e35a610ba3fe495d64df6b8",
+      "id": 46875719358,
+      "state": "success",
+      "description": "Review completed",
+      "target_url": null,
+      "context": "CodeRabbit"
+    },
+    {
+      "url": "https://api.github.com/repos/openshift/cluster-capi-operator/statuses/a9f632b5",
+      "id": 99999999,
+      "state": "pending",
+      "description": "Build started",
+      "target_url": "https://prow.ci.openshift.org/view/gs/test-platform-results/pr-logs/pull/openshift_cluster-capi-operator/547/pending-job/0000000000000000000",
+      "context": "ci/prow/pending-test"
+    }
+  ],
+  "sha": "a9f632b5299ee9512e35a610ba3fe495d64df6b8",
+  "total_count": 5
+}

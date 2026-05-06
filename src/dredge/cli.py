@@ -1,13 +1,13 @@
 import argparse
 import logging
-import re
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 import requests
 
-from . import artifacts, discovery, github
+from . import artifacts
+from .discovery import JobFilter, from_github_pr, from_prow_history
 from .fetcher import _auth
 from .prow import Job
 
@@ -142,41 +142,29 @@ def _load_job(build_dir: Path) -> Job:
 def cmd_pr(args: argparse.Namespace, output_dir: Path | None) -> None:
     """Handle the 'pr' subcommand."""
     assert output_dir is not None
-    match = re.match(r"https://github\.com/([^/]+)/([^/]+)/pull/(\d+)", args.pr_url)
-    if not match:
-        logger.error(f"Invalid GitHub PR URL: {args.pr_url}")
+    logger.info(f"Fetching failed jobs for {args.pr_url}")
+
+    try:
+        urls = from_github_pr(args.pr_url, job_filter=JobFilter.FAILED)
+    except ValueError as e:
+        logger.error(str(e))
         sys.exit(1)
-
-    owner, repo, pr_number = match.group(1), match.group(2), match.group(3)
-    logger.info(f"Fetching failed jobs for {owner}/{repo}#{pr_number}")
-
-    try:
-        token = github.get_github_token()
-    except github.TokenError:
-        token = None
-        logger.warning(
-            "No GitHub token found (gh CLI not available or not logged in). "
-            "Using unauthenticated requests (rate-limited)."
-        )
-
-    try:
-        failed_urls = github.fetch_failed_pr_jobs(owner, repo, pr_number, token)
     except requests.RequestException as e:
         logger.error(f"Failed to fetch PR info from GitHub API: {e}")
         sys.exit(1)
 
-    if not failed_urls:
+    if not urls:
         logger.info("No failed prow jobs found for this PR")
         sys.exit(0)
 
-    logger.info(f"Found {len(failed_urls)} failed prow job(s)")
-    for url in failed_urls:
+    logger.info(f"Found {len(urls)} failed prow job(s)")
+    for url in urls:
         logger.info(f"  {url}")
 
     auto_mg, auto_hs = _resolve_auto_flags(args)
 
-    for i, url in enumerate(failed_urls, 1):
-        logger.info(f"--- Processing build {i}/{len(failed_urls)} ---")
+    for i, url in enumerate(urls, 1):
+        logger.info(f"--- Processing build {i}/{len(urls)} ---")
         artifacts.process_build(url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs)
 
     try:
@@ -198,7 +186,14 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
         logger.error("Count must be at least 1")
         sys.exit(1)
 
-    prow_base_url = f"{parsed.scheme}://{parsed.netloc}"
+    if args.failure and args.success:
+        job_filter = JobFilter.ALL
+    elif args.failure:
+        job_filter = JobFilter.FAILED
+    elif args.success:
+        job_filter = JobFilter.SUCCESS
+    else:
+        job_filter = JobFilter.FAILED
 
     filter_desc = []
     if args.failure:
@@ -210,24 +205,20 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     logger.info(f"Starting download of {args.count} builds{filter_str} from: {args.url}")
     logger.info(f"Output directory: {output_dir.absolute()}")
 
-    raw_builds = discovery.collect_builds(
-        args.url, args.count, failure=args.failure, success=args.success
-    )
+    urls = from_prow_history(args.url, args.count, job_filter=job_filter)
 
-    if not raw_builds:
+    if not urls:
         logger.warning("No builds found matching criteria")
         sys.exit(0)
 
-    builds = [discovery.Build.from_prow_json(b) for b in raw_builds]
-    logger.info(f"Processing {len(builds)} builds")
+    logger.info(f"Processing {len(urls)} builds")
 
     auto_mg, auto_hs = _resolve_auto_flags(args)
 
-    for i, build in enumerate(builds, 1):
-        spyglass_url = f"{prow_base_url}{build.spyglass_link}"
-        logger.info(f"--- Processing build {i}/{len(builds)} (ID: {build.id}) ---")
+    for i, url in enumerate(urls, 1):
+        logger.info(f"--- Processing build {i}/{len(urls)} ---")
         artifacts.process_build(
-            spyglass_url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs
+            url, output_dir, auto_must_gather=auto_mg, auto_hypershift=auto_hs
         )
 
     try:
