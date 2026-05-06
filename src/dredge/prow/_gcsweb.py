@@ -3,7 +3,7 @@ import re
 import shutil
 from urllib.parse import urlparse
 
-from ..fetch_url import fetch_url, NotFoundError
+from ..fetcher import fetch_url, NotFoundError
 
 logger = logging.getLogger(__name__)
 

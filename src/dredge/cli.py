@@ -8,10 +8,10 @@ from urllib.parse import urlparse
 import requests
 
 from . import artifacts
+from . import discovery
 from . import github
-from . import prow
-from .fetch_url import _auth
-from .import_job import Job
+from .fetcher import _auth
+from .prow import Job
 
 logger = logging.getLogger(__name__)
 
@@ -202,13 +202,13 @@ def cmd_history(args: argparse.Namespace, output_dir: Path | None) -> None:
     logger.info(f"Starting download of {args.count} builds{filter_str} from: {args.url}")
     logger.info(f"Output directory: {output_dir.absolute()}")
 
-    raw_builds = prow.collect_builds(args.url, args.count, failure=args.failure, success=args.success)
+    raw_builds = discovery.collect_builds(args.url, args.count, failure=args.failure, success=args.success)
 
     if not raw_builds:
         logger.warning("No builds found matching criteria")
         sys.exit(0)
 
-    builds = [prow.Build.from_prow_json(b) for b in raw_builds]
+    builds = [discovery.Build.from_prow_json(b) for b in raw_builds]
     logger.info(f"Processing {len(builds)} builds")
 
     auto_mg, auto_hs = _resolve_auto_flags(args)

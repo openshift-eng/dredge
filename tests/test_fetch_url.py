@@ -8,7 +8,7 @@ import requests
 import responses
 import urllib3
 
-from dredge.fetch_url import FetchError, NotFoundError, fetch_url
+from dredge.fetcher import FetchError, NotFoundError, fetch_url
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -38,7 +38,7 @@ class TestFetchUrl:
                 body.read()
 
     @responses.activate
-    @patch("dredge.fetch_url._session.time.sleep")
+    @patch("dredge.fetcher._session.time.sleep")
     def test_retries_on_transient_failure(self, mock_sleep):
         responses.get(
             "http://example.com/flaky",
@@ -54,7 +54,7 @@ class TestFetchUrl:
             assert body.read() == b"recovered"
 
     @responses.activate
-    @patch("dredge.fetch_url._session.time.sleep")
+    @patch("dredge.fetcher._session.time.sleep")
     def test_raises_after_retries_exhausted(self, mock_sleep):
         for _ in range(4):
             responses.get(
@@ -78,7 +78,7 @@ class TestFetchUrl:
         mock_response.status_code = 200
         mock_response.raw = raw
 
-        with patch("dredge.fetch_url._session.get", return_value=mock_response):
+        with patch("dredge.fetcher._session.get", return_value=mock_response):
             with fetch_url("http://example.com/gzipped") as body:
                 assert body.read() == b"hello gzipped"
 
@@ -196,13 +196,13 @@ class TestFetchUrl:
         # 12. Retry original request with auth cookies → 200
         responses.get(f"{base}/page", body=b"authenticated")
 
-        with patch("dredge.fetch_url._auth._generate_kerberos_token", return_value="fake-token"):
-            with patch("dredge.fetch_url._auth._save_cookies"):
-                with patch("dredge.fetch_url._auth._load_cached_cookies", return_value=None):
+        with patch("dredge.fetcher._auth._generate_kerberos_token", return_value="fake-token"):
+            with patch("dredge.fetcher._auth._save_cookies"):
+                with patch("dredge.fetcher._auth._load_cached_cookies", return_value=None):
                     with fetch_url(f"{base}/page") as body:
                         assert body.read() == b"authenticated"
 
     def test_public_api_is_restricted(self):
-        import dredge.fetch_url as module
+        import dredge.fetcher as module
 
         assert set(module.__all__) == {"fetch_url", "FetchError", "NotFoundError"}

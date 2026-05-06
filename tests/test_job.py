@@ -2,8 +2,7 @@ import json
 
 import pytest
 
-from dredge.import_job import Job
-from dredge.step import Step
+from dredge.prow import Job, Step
 
 GCS_PATH = "test-bucket/pr-logs/pull/org_repo/123/job-name/9999"
 GCSWEB_BASE = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/"

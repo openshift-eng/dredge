@@ -2,11 +2,11 @@ import json
 import logging
 from pathlib import Path
 
-from ..fetch_url import FetchError
-from ..step import Step
+from ..fetcher import FetchError
 from . import _metadata
+from ._step import Step
 
-__all__ = ["import_job", "Job", "JobImportError"]
+__all__ = ["import_from_spyglass", "Job", "JobImportError", "Step"]
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ class Job:
         return result
 
 
-def import_job(spyglass_url, output_dir):
+def import_from_spyglass(spyglass_url, output_dir):
     output_dir = Path(output_dir)
 
     build_id, spyglass_link = _metadata.parse_spyglass_url(spyglass_url)

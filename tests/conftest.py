@@ -1,6 +1,6 @@
 import pytest
 
-from dredge.fetch_url import _session
+from dredge.fetcher import _session
 
 
 @pytest.fixture(autouse=True)

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 import responses
 
-from dredge.import_job import import_job, Job, JobImportError
+from dredge.prow import import_from_spyglass, Job, JobImportError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -42,7 +42,7 @@ class TestImportJob:
     def test_happy_path_returns_job_with_correct_metadata(self, tmp_path):
         _mock_all()
 
-        job = import_job(SPYGLASS_URL, tmp_path)
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         assert isinstance(job, Job)
         assert job.job_dir == tmp_path / BUILD_ID
@@ -58,7 +58,7 @@ class TestImportJob:
     def test_writes_steps_json_with_recursive_hierarchy(self, tmp_path):
         _mock_all()
 
-        job = import_job(SPYGLASS_URL, tmp_path)
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         steps = json.loads((job.job_dir / "steps.json").read_text())
         assert "[input:root]" not in steps
@@ -71,10 +71,10 @@ class TestImportJob:
     def test_idempotent_skips_refetch(self, tmp_path):
         _mock_all()
 
-        job = import_job(SPYGLASS_URL, tmp_path)
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
         call_count_after_first = len(responses.calls)
 
-        job2 = import_job(SPYGLASS_URL, tmp_path)
+        job2 = import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         assert isinstance(job2, Job)
         assert job2.job_dir == job.job_dir
@@ -89,11 +89,11 @@ class TestImportJob:
         )
 
         with pytest.raises(JobImportError):
-            import_job(SPYGLASS_URL, tmp_path)
+            import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         assert not (tmp_path / BUILD_ID / "job.json").exists()
 
     def test_public_api_is_restricted(self):
-        import dredge.import_job as module
+        import dredge.prow as module
 
-        assert set(module.__all__) == {"import_job", "Job", "JobImportError"}
+        assert set(module.__all__) == {"import_from_spyglass", "Job", "JobImportError", "Step"}

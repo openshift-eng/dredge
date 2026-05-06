@@ -2,7 +2,7 @@ from pathlib import Path
 
 import responses
 
-from dredge.step import Step
+from dredge.prow import Step
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -133,7 +133,7 @@ class TestGetArtifact:
 
 
 class TestPublicAPI:
-    def test_all_is_restricted(self):
-        import dredge.step as module
+    def test_step_in_prow_all(self):
+        import dredge.prow as module
 
-        assert set(module.__all__) == {"Step"}
+        assert "Step" in module.__all__

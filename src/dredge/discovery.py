@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urljoin
 
-from .fetch_url import fetch_url, FetchError
+from .fetcher import fetch_url, FetchError
 
 logger = logging.getLogger(__name__)
 

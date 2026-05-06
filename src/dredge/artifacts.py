@@ -3,10 +3,9 @@ import logging
 import tarfile
 from pathlib import Path
 
-from .fetch_url import FetchError
-from .import_job import import_job, Job, JobImportError
-from .step import Step
-from .step import _gcsweb
+from .fetcher import FetchError
+from .prow import import_from_spyglass, Job, JobImportError, Step
+from .prow import _gcsweb
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +275,7 @@ def process_build(spyglass_url: str, output_dir: Path,
                   auto_must_gather: bool = False, auto_hypershift: bool = False) -> None:
     """Import and download artifacts for one build."""
     try:
-        job = import_job(spyglass_url, output_dir)
+        job = import_from_spyglass(spyglass_url, output_dir)
     except JobImportError as e:
         logger.warning(f"Failed to import job: {e}")
         return

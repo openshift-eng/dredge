@@ -3,7 +3,7 @@ import re
 import xml.etree.ElementTree as ET
 from urllib.parse import urlparse
 
-from ..fetch_url import fetch_url
+from ..fetcher import fetch_url
 
 
 def parse_spyglass_url(url):
