@@ -16,14 +16,14 @@ _BACKOFF = 2
 _TIMEOUT = 30
 
 
-def _get_session():
+def _get_session() -> requests.Session:
     global _session
     if _session is None:
         _session = requests.Session()
     return _session
 
 
-def get(url):
+def get(url: str) -> requests.Response:
     session = _get_session()
     last_exc = None
     for attempt in range(_RETRIES):

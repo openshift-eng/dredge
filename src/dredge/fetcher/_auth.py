@@ -31,6 +31,7 @@ import logging
 import re
 from html import unescape as html_unescape
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlencode, urljoin, urlparse
 
 import requests
@@ -52,26 +53,28 @@ _COOKIE_CACHE_DIR = Path.home() / ".config" / "dredge" / "cookies"
 _trusted_domains = list(_DEFAULT_TRUSTED_DOMAINS)
 _auth_failed_domains: set[str] = set()
 
+_Redirect = tuple[str, str, dict[str, str] | None]
+
 
 class AuthenticationError(Exception):
     pass
 
 
-def configure(extra_trusted_domains=None):
+def configure(extra_trusted_domains: list[str] | None = None) -> None:
     global _trusted_domains
     _trusted_domains = list(_DEFAULT_TRUSTED_DOMAINS)
     if extra_trusted_domains:
         _trusted_domains.extend(extra_trusted_domains)
 
 
-def is_oauth_proxy_auth_required(response):
+def is_oauth_proxy_auth_required(response: requests.Response) -> bool:
     if response.status_code != 403:
         return False
     set_cookie = response.headers.get("Set-Cookie", "")
     return "_oauth_proxy=" in set_cookie
 
 
-def _is_trusted_domain(hostname):
+def _is_trusted_domain(hostname: str) -> bool:
     for domain in _trusted_domains:
         if domain.startswith("."):
             if hostname.endswith(domain) or hostname == domain[1:]:
@@ -82,9 +85,9 @@ def _is_trusted_domain(hostname):
     return False
 
 
-def _check_trusted_redirect(url):
+def _check_trusted_redirect(url: str) -> None:
     hostname = urlparse(url).hostname
-    if not _is_trusted_domain(hostname):
+    if not hostname or not _is_trusted_domain(hostname):
         raise AuthenticationError(
             f"Redirect to untrusted domain: {hostname} "
             f"(trusted: {', '.join(_trusted_domains)}). "
@@ -92,7 +95,7 @@ def _check_trusted_redirect(url):
         )
 
 
-def _extract_form_redirect(response):
+def _extract_form_redirect(response: requests.Response) -> _Redirect | None:
     html = response.text
 
     form_match = re.search(
@@ -134,7 +137,7 @@ def _extract_form_redirect(response):
         return ("POST", url, form_data or None)
 
 
-def _extract_link_redirect(response):
+def _extract_link_redirect(response: requests.Response) -> _Redirect | None:
     html = response.text
     hrefs = re.findall(r"href=[\"']([^\"']+)[\"']", html)
     links = [h for h in hrefs if not h.startswith(("data:", "#", "javascript:"))]
@@ -144,14 +147,14 @@ def _extract_link_redirect(response):
     return None
 
 
-def _extract_scraped_redirect(response):
+def _extract_scraped_redirect(response: requests.Response) -> _Redirect | None:
     result = _extract_form_redirect(response)
     if result:
         return result
     return _extract_link_redirect(response)
 
 
-def _generate_kerberos_token(hostname):
+def _generate_kerberos_token(hostname: str) -> str | None:
     if not _HAS_KERBEROS:
         return None
     try:
@@ -164,7 +167,7 @@ def _generate_kerberos_token(hostname):
         return None
 
 
-def _follow_auth_chain(start_url):
+def _follow_auth_chain(start_url: str) -> requests.Session:
     session = requests.Session()
     visited = set()
     method = "GET"
@@ -172,10 +175,11 @@ def _follow_auth_chain(start_url):
     data = None
 
     for hop in range(_MAX_AUTH_HOPS):
+        hostname = urlparse(url).hostname
         domain_cookies = frozenset(
             (c.name, c.value)
             for c in session.cookies
-            if c.domain and urlparse(url).hostname.endswith(c.domain.lstrip("."))
+            if c.domain and hostname is not None and hostname.endswith(c.domain.lstrip("."))
         )
         key = (method, url, domain_cookies)
         if key in visited:
@@ -248,7 +252,7 @@ def _follow_auth_chain(start_url):
     raise AuthenticationError(f"Too many redirects ({_MAX_AUTH_HOPS})")
 
 
-def _load_cached_cookies(domain):
+def _load_cached_cookies(domain: str) -> Any:
     path = _COOKIE_CACHE_DIR / f"{domain}.json"
     if not path.exists():
         return None
@@ -258,20 +262,22 @@ def _load_cached_cookies(domain):
         return None
 
 
-def _save_cookies(domain, cookies):
+def _save_cookies(domain: str, cookies: dict[str, str]) -> None:
     _COOKIE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     path = _COOKIE_CACHE_DIR / f"{domain}.json"
     path.write_text(json.dumps(cookies))
     logger.info(f"Cached authentication cookies for {domain}")
 
 
-def _clear_cached_cookies(domain):
+def _clear_cached_cookies(domain: str) -> None:
     path = _COOKIE_CACHE_DIR / f"{domain}.json"
     if path.exists():
         path.unlink()
 
 
-def authenticate_session(session, failed_response, url):
+def authenticate_session(
+    session: requests.Session, failed_response: requests.Response, url: str
+) -> bool:
     domain = urlparse(url).netloc
 
     cached = _load_cached_cookies(domain)
@@ -300,13 +306,13 @@ def authenticate_session(session, failed_response, url):
         logger.error(f"Authentication failed for {domain}: {e}")
         return False
 
-    cookies = {}
+    cookies: dict[str, str] = {}
     for cookie in auth_session.cookies:
         if cookie.domain and domain in cookie.domain:
-            cookies[cookie.name] = cookie.value
+            cookies[cookie.name] = cookie.value or ""
             session.cookies.set(
                 cookie.name,
-                cookie.value,
+                cookie.value or "",
                 domain=cookie.domain,
                 path=cookie.path,
             )

@@ -1,6 +1,7 @@
 import logging
 import re
 import shutil
+from pathlib import Path
 from urllib.parse import urlparse
 
 from ..fetcher import NotFoundError, fetch_url
@@ -9,14 +10,14 @@ from ._types import ArtifactEntry, ArtifactType
 logger = logging.getLogger(__name__)
 
 
-def download(url, dest):
+def download(url: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     with fetch_url(url) as body, open(dest, "wb") as f:
         shutil.copyfileobj(body, f)
     logger.info(f"Downloaded to: {dest}")
 
 
-def list_dir(url) -> list[ArtifactEntry]:
+def list_dir(url: str) -> list[ArtifactEntry]:
     try:
         with fetch_url(url) as body:
             html = body.read().decode()

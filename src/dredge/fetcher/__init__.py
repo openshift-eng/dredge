@@ -1,6 +1,8 @@
+from collections.abc import Generator
 from contextlib import contextmanager
 
 import requests
+from urllib3.response import HTTPResponse
 
 from . import _session
 
@@ -16,7 +18,7 @@ class NotFoundError(FetchError):
 
 
 @contextmanager
-def fetch_url(url):
+def fetch_url(url: str) -> Generator[HTTPResponse, None, None]:
     try:
         response = _session.get(url)
     except requests.RequestException as e:

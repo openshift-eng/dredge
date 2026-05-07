@@ -17,7 +17,7 @@ class JobImportError(Exception):
 
 
 class Job:
-    def __init__(self, job_dir):
+    def __init__(self, job_dir: str | Path) -> None:
         job_dir = Path(job_dir)
         self.job_dir = job_dir
 
@@ -58,7 +58,7 @@ class Job:
             test_name=name,
         )
 
-    def steps(self):
+    def steps(self) -> list[Step]:
         return [
             Step(
                 name=name,
@@ -70,7 +70,7 @@ class Job:
             for name, info in self._steps_data.items()
         ]
 
-    def failed_steps(self):
+    def failed_steps(self) -> list[Step]:
         result = []
         for name, info in self._steps_data.items():
             for inner_name, inner_info in info.get("substeps", {}).items():
@@ -88,7 +88,7 @@ class Job:
         return result
 
 
-def import_from_spyglass(spyglass_url, output_dir):
+def import_from_spyglass(spyglass_url: str, output_dir: str | Path) -> Job:
     output_dir = Path(output_dir)
 
     build_id, spyglass_link = _metadata.parse_spyglass_url(spyglass_url)
