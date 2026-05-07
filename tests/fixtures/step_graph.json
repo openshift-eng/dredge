@@ -21,6 +21,24 @@
     "started_at": "2025-01-15T10:05:00Z",
     "finished_at": "2025-01-15T10:10:00Z",
     "duration": 300000000000,
-    "dependencies": ["src"]
+    "dependencies": ["src"],
+    "substeps": [
+      {
+        "name": "breaking-changes-setup",
+        "description": "Run pod breaking-changes-setup",
+        "failed": false,
+        "started_at": "2025-01-15T10:05:00Z",
+        "finished_at": "2025-01-15T10:05:30Z",
+        "duration": 30000000000
+      },
+      {
+        "name": "breaking-changes-breaking-changes",
+        "description": "Run pod breaking-changes-breaking-changes",
+        "failed": true,
+        "started_at": "2025-01-15T10:05:30Z",
+        "finished_at": "2025-01-15T10:10:00Z",
+        "duration": 270000000000
+      }
+    ]
   }
 ]

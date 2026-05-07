@@ -31,10 +31,6 @@ def _mock_all():
         f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
         body=(FIXTURES / "step_graph.json").read_bytes(),
     )
-    responses.get(
-        f"{GCSWEB_BASE}{GCS_PATH}/artifacts/junit_operator.xml",
-        body=(FIXTURES / "junit_operator.xml").read_bytes(),
-    )
 
 
 class TestImportJob:
@@ -92,6 +88,51 @@ class TestImportJob:
             import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         assert not (tmp_path / BUILD_ID / "job.json").exists()
+
+    @responses.activate
+    def test_substeps_from_step_graph_skips_junit_fetch(self, tmp_path):
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+            body=(FIXTURES / "prowjob.json").read_bytes(),
+        )
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            body=(FIXTURES / "step_graph.json").read_bytes(),
+        )
+
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        steps = json.loads((job.job_dir / "steps.json").read_text())
+        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
+        fetched_urls = [c.request.url for c in responses.calls]
+        assert not any("junit_operator.xml" in u for u in fetched_urls)
+
+    @responses.activate
+    def test_falls_back_to_junit_when_no_substeps(self, tmp_path):
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+            body=(FIXTURES / "prowjob.json").read_bytes(),
+        )
+        old_step_graph = json.loads((FIXTURES / "step_graph.json").read_text())
+        for step in old_step_graph:
+            step.pop("substeps", None)
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            json=old_step_graph,
+        )
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/junit_operator.xml",
+            body=(FIXTURES / "junit_operator.xml").read_bytes(),
+        )
+
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        steps = json.loads((job.job_dir / "steps.json").read_text())
+        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
 
     def test_public_api_is_restricted(self):
         import dredge.prow as module

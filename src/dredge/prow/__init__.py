@@ -105,8 +105,9 @@ def import_from_spyglass(spyglass_url: str, output_dir: str | Path) -> Job:
         step_graph = _metadata.fetch_step_graph(gcsweb_base, gcs_path)
         job_spec = _metadata.fetch_job_spec(gcsweb_base, gcs_path)
         steps = _metadata.extract_steps(step_graph)
-        junit_steps = _metadata.fetch_junit_steps(gcsweb_base, gcs_path)
-        _metadata.apply_inner_steps(steps, junit_steps)
+        if not any(s["inner_steps"] for s in steps):
+            junit_steps = _metadata.fetch_junit_steps(gcsweb_base, gcs_path)
+            _metadata.apply_inner_steps(steps, junit_steps)
     except (FetchError, ValueError) as e:
         raise JobImportError(str(e)) from e
 

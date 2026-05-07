@@ -37,8 +37,8 @@ src/dredge/
    - **`import_from_spyglass(spyglass_url, output_dir)` creates the job directory and returns a `Job` (idempotent)**:
      - Parse Spyglass URL → build_id, gcs_path, prow_base_url
      - Discover gcsweb base URL from Spyglass page HTML
-     - Fetch and parse ci-operator-step-graph.json → extract job metadata and top-level steps
-     - Fetch and parse junit_operator.xml → extract inner steps for multi-stage tests
+     - Fetch and parse ci-operator-step-graph.json → extract top-level steps and inner steps from substeps
+     - Fall back to junit_operator.xml for inner steps when step graph lacks substeps (older jobs)
      - Write `job.json`, `steps.json`, `ci-operator-step-graph.json`
    - **Download build-log.txt and junit XML for failed steps (via `job.failed_steps()` and `Step` methods)**
    - **If --auto-must-gather: discover and download must-gather (scan steps for gather-must-gather substep)**
@@ -215,7 +215,7 @@ Use `job.failed_steps()` to get all failed inner steps as `Step` objects.
 |----------|--------|
 | Network error | Retry 3x with backoff, then fail |
 | allBuilds not in HTML | Exit with error (page structure changed) |
-| junit_operator.xml 404 | JobImportError (no inner steps available) |
+| junit_operator.xml 404 | JobImportError (only when step graph has no substeps) |
 | junit_operator.xml unparseable | JobImportError |
 | build-log.txt 404 | Info log (expected), continue |
 | must-gather 404 | Info log (expected), continue |
@@ -266,7 +266,7 @@ The artifacts this tool downloads are produced by `ci-operator` in [openshift/ci
 
 - **Step execution and error construction**: `pkg/steps/run.go` — `Run()` executes the step graph as a DAG, creating one junit test case per step from `err.Error()`. `pkg/steps/multi_stage/run.go` — `runPod()` constructs the error for failed multi-stage steps, wrapping the result from `pkg/util/pods.go` `WaitForPodCompletion()` → `processPodEvent()`.
 
-- **Step graph JSON**: `pkg/api/graph.go` — `CIOperatorStepDetails` / `CIOperatorStepDetailInfo` define the schema for `ci-operator-step-graph.json`. Includes `name`, `failed`, `started_at`, `finished_at`, `duration`, `dependencies`. Note: `substeps` field exists in the struct but is not populated for multi-stage tests in practice.
+- **Step graph JSON**: `pkg/api/graph.go` — `CIOperatorStepDetails` / `CIOperatorStepDetailInfo` define the schema for `ci-operator-step-graph.json`. Includes `name`, `failed`, `started_at`, `finished_at`, `duration`, `dependencies`, `substeps`. The `substeps` field is populated for multi-stage test steps since ci-tools PR #5151.
 
 - **Artifact directory layout**: Multi-stage test artifacts land under `artifacts/{test_name}/{inner_step}/`. The inner step directory name is the step name with the test name prefix stripped (e.g. step `e2e-aws-ovn-openshift-e2e-test` → directory `openshift-e2e-test`). Each step directory contains `build-log.txt` (complete container log) and an `artifacts/` subdirectory with step-produced files (junit XML, etc.).
 

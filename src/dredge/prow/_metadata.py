@@ -62,19 +62,24 @@ def extract_steps(step_graph: Any) -> list[dict[str, Any]]:
         name = s.get("name", "")
         if name.startswith("["):
             continue
+        inner: dict[str, Any] = {}
+        prefix = name + "-"
+        for sub in s.get("substeps", []):
+            sub_name = sub.get("name", "")
+            stripped = sub_name[len(prefix) :] if sub_name.startswith(prefix) else sub_name
+            inner[stripped] = {"success": not sub.get("failed", False)}
         steps.append(
             {
                 "name": name,
                 "success": not s.get("failed", False),
-                "inner_steps": {},
+                "inner_steps": inner,
             }
         )
     return steps
 
 
 def fetch_junit_steps(gcsweb_base: str, gcs_path: str) -> dict[str, dict[str, object]]:
-    # Current primary source for inner steps. ci-tools PR #5151 will add
-    # substeps to the step graph, which will eventually replace this.
+    # Fallback for older jobs without substeps in the step graph.
     url = f"{gcsweb_base}{gcs_path}/artifacts/junit_operator.xml"
     with fetch_url(url) as body:
         xml_text = body.read().decode()
