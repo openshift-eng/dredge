@@ -58,6 +58,17 @@ class TestGetLog:
         assert result.read_text() == "inner log"
 
     @responses.activate
+    def test_container_test_step(self, tmp_path):
+        step = _make_step(tmp_path, name="test")
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/test/build-log.txt"
+        responses.get(url, body=b"unit test output")
+
+        result = step.get_log()
+
+        assert result == tmp_path / "test" / "build-log.txt"
+        assert result.read_text() == "unit test output"
+
+    @responses.activate
     def test_idempotent(self, tmp_path):
         step = _make_step(tmp_path)
         url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/build-log.txt"

@@ -134,6 +134,35 @@ class TestImportJob:
         assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
         assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
 
+    @responses.activate
+    def test_container_test_step_renamed_to_test(self, tmp_path):
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+            body=(FIXTURES / "prowjob.json").read_bytes(),
+        )
+        step_graph = [
+            {"name": "[input:root]"},
+            {"name": "src"},
+            {"name": "unit", "failed": True},
+        ]
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            json=step_graph,
+        )
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/junit_operator.xml",
+            body=b'<testsuite><testcase name="Run unit test"/></testsuite>',
+        )
+
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        steps = json.loads((job.job_dir / "steps.json").read_text())
+        assert "unit" not in steps
+        assert "test" in steps
+        assert steps["test"]["success"] is False
+        assert steps["src"]["success"] is True
+
     def test_public_api_is_restricted(self):
         import dredge.prow as module
 

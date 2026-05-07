@@ -151,3 +151,21 @@ class TestFailedSteps:
         job = Job(job_dir)
 
         assert job.failed_steps() == []
+
+    def test_returns_failed_top_level_without_substeps(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(
+            job_dir,
+            steps={
+                "test": {"success": False},
+            },
+        )
+        job = Job(job_dir)
+
+        failed = job.failed_steps()
+
+        assert len(failed) == 1
+        assert failed[0].name == "test"
+        assert failed[0].test_name is None
+        assert failed[0].success is False
+        assert failed[0].step_path == "test"

@@ -73,18 +73,30 @@ class Job:
     def failed_steps(self) -> list[Step]:
         result = []
         for name, info in self._steps_data.items():
-            for inner_name, inner_info in info.get("substeps", {}).items():
-                if not inner_info["success"]:
-                    result.append(
-                        Step(
-                            name=inner_name,
-                            success=False,
-                            gcs_path=self.gcs_path,
-                            gcsweb_base=self.gcsweb_base,
-                            job_dir=self.job_dir,
-                            test_name=name,
+            substeps = info.get("substeps", {})
+            if substeps:
+                for inner_name, inner_info in substeps.items():
+                    if not inner_info["success"]:
+                        result.append(
+                            Step(
+                                name=inner_name,
+                                success=False,
+                                gcs_path=self.gcs_path,
+                                gcsweb_base=self.gcsweb_base,
+                                job_dir=self.job_dir,
+                                test_name=name,
+                            )
                         )
+            elif not info["success"]:
+                result.append(
+                    Step(
+                        name=name,
+                        success=False,
+                        gcs_path=self.gcs_path,
+                        gcsweb_base=self.gcsweb_base,
+                        job_dir=self.job_dir,
                     )
+                )
         return result
 
 
@@ -108,6 +120,14 @@ def import_from_spyglass(spyglass_url: str, output_dir: str | Path) -> Job:
         if not any(s["inner_steps"] for s in steps):
             junit_steps = _metadata.fetch_junit_steps(gcsweb_base, gcs_path)
             _metadata.apply_inner_steps(steps, junit_steps)
+
+        # ci-operator container tests always upload artifacts to "test/"
+        # regardless of the test's configured name.
+        # See: openshift/ci-tools pkg/steps/pod.go TestStep() calling PodStep("test", ...)
+        if not any(s["inner_steps"] for s in steps):
+            for s in steps:
+                if s["name"] != "src":
+                    s["name"] = "test"
     except (FetchError, ValueError) as e:
         raise JobImportError(str(e)) from e
 
