@@ -1,8 +1,11 @@
+import gzip
+import io
+import tarfile
 from pathlib import Path
 
 import responses
 
-from dredge.prow import Step
+from dredge.prow import ArtifactEntry, ArtifactType, Step
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -76,17 +79,52 @@ class TestListArtifacts:
 
         entries = step.list_artifacts()
 
-        dirs = [e for e in entries if e["type"] == "dir"]
-        files = [e for e in entries if e["type"] == "file"]
-        assert {d["filename"] for d in dirs} == {"junit", "must-gather"}
-        assert {f["filename"] for f in files} == {
+        dirs = [e for e in entries if e.type == ArtifactType.DIR]
+        files = [e for e in entries if e.type == ArtifactType.FILE]
+        assert {d.filename for d in dirs} == {"junit", "must-gather"}
+        assert {f.filename for f in files} == {
             "e2e-events_20250101-120000.json",
             "junit_e2e_20250101-120000.xml",
         }
         for e in entries:
-            assert "filename" in e
-            assert "size" in e
-            assert "type" in e
+            assert isinstance(e, ArtifactEntry)
+
+    @responses.activate
+    def test_file_sizes_populated(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/"
+        responses.get(url, body=(FIXTURES / "gcsweb_dir.html").read_bytes())
+
+        entries = step.list_artifacts()
+
+        files = {e.filename: e.size for e in entries if e.type == ArtifactType.FILE}
+        assert files["e2e-events_20250101-120000.json"] == 1048576
+        assert files["junit_e2e_20250101-120000.xml"] == 524288
+        for e in entries:
+            if e.type == ArtifactType.DIR:
+                assert e.size is None
+
+    @responses.activate
+    def test_default_path_is_root(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/"
+        responses.get(url, body=(FIXTURES / "gcsweb_dir.html").read_bytes())
+
+        step.list_artifacts()
+
+        assert responses.calls[0].request.url == url
+
+    @responses.activate
+    def test_path_normalization(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/junit/"
+        gcs_prefix = f"/gcs/{GCS_PATH}/artifacts/{step.name}/artifacts/junit"
+        html = f'<html><ul><li><a href="{gcs_prefix}/results.xml">results.xml</a></li></ul></html>'
+        responses.get(url, body=html.encode())
+
+        step.list_artifacts(path="/junit/")
+
+        assert responses.calls[0].request.url == url
 
     @responses.activate
     def test_subdirectory(self, tmp_path):
@@ -104,7 +142,7 @@ class TestListArtifacts:
         entries = step.list_artifacts(path="junit")
 
         assert len(entries) == 1
-        assert entries[0] == {"filename": "results.xml", "size": None, "type": "file"}
+        assert entries[0] == ArtifactEntry(filename="results.xml", size=None, type=ArtifactType.FILE)
 
 
 class TestGetArtifact:
@@ -132,8 +170,129 @@ class TestGetArtifact:
         assert len(responses.calls) == 1
 
 
+def _make_tar_gz(files: dict[str, bytes]) -> bytes:
+    buf = io.BytesIO()
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            for name, content in files.items():
+                info = tarfile.TarInfo(name=name)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+    return buf.getvalue()
+
+
+class TestExtractArtifact:
+    @responses.activate
+    def test_extracts_tar_gz(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/must-gather.tar"
+        tar_data = _make_tar_gz({"hello.txt": b"world"})
+        responses.get(url, body=tar_data)
+
+        result = step.extract_artifact("must-gather.tar")
+
+        assert result == tmp_path / step.name / "artifacts" / "must-gather"
+        assert (result / "hello.txt").read_text() == "world"
+
+    @responses.activate
+    def test_error_on_non_tar(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/bad.tar"
+        responses.get(url, body=b"this is not a tar file")
+
+        import pytest
+
+        with pytest.raises(tarfile.TarError):
+            step.extract_artifact("bad.tar")
+
+    @responses.activate
+    def test_idempotent(self, tmp_path):
+        step = _make_step(tmp_path)
+        url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts/must-gather.tar"
+        tar_data = _make_tar_gz({"hello.txt": b"world"})
+        responses.get(url, body=tar_data)
+
+        step.extract_artifact("must-gather.tar")
+        assert len(responses.calls) == 1
+
+        step.extract_artifact("must-gather.tar")
+        assert len(responses.calls) == 1
+
+
+class TestGetArtifactRecursive:
+    @responses.activate
+    def test_recursive_download(self, tmp_path):
+        step = _make_step(tmp_path)
+        base = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts"
+        gcs_prefix = f"/gcs/{GCS_PATH}/artifacts/{step.name}/artifacts"
+
+        top_html = (
+            f'<html><ul>'
+            f'<li><a href="{gcs_prefix}/data/sub/">sub/</a></li>'
+            f'<li><a href="{gcs_prefix}/data/a.txt">a.txt</a></li>'
+            f'</ul></html>'
+        )
+        sub_html = (
+            f'<html><ul>'
+            f'<li><a href="{gcs_prefix}/data/sub/b.txt">b.txt</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(f"{base}/data/", body=top_html.encode())
+        responses.get(f"{base}/data/sub/", body=sub_html.encode())
+        responses.get(f"{base}/data/a.txt", body=b"file-a")
+        responses.get(f"{base}/data/sub/b.txt", body=b"file-b")
+
+        result = step.get_artifact("data", recursive=True)
+
+        assert result == tmp_path / step.name / "artifacts" / "data"
+        assert (tmp_path / step.name / "artifacts" / "data" / "a.txt").read_bytes() == b"file-a"
+        assert (tmp_path / step.name / "artifacts" / "data" / "sub" / "b.txt").read_bytes() == b"file-b"
+
+    @responses.activate
+    def test_recursive_idempotent(self, tmp_path):
+        step = _make_step(tmp_path)
+        base = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/{step.name}/artifacts"
+        gcs_prefix = f"/gcs/{GCS_PATH}/artifacts/{step.name}/artifacts"
+
+        top_html = (
+            f'<html><ul>'
+            f'<li><a href="{gcs_prefix}/data/a.txt">a.txt</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(f"{base}/data/", body=top_html.encode())
+        responses.get(f"{base}/data/a.txt", body=b"file-a")
+
+        step.get_artifact("data", recursive=True)
+        call_count = len(responses.calls)
+
+        responses.get(f"{base}/data/", body=top_html.encode())
+        step.get_artifact("data", recursive=True)
+        # Listed again but did not re-download the file
+        assert len(responses.calls) == call_count + 1
+
+
+class TestArtifactEntry:
+    def test_serializes_to_json(self):
+        import dataclasses
+        import json
+
+        entry = ArtifactEntry(filename="test.txt", size=1024, type=ArtifactType.FILE)
+        result = json.loads(json.dumps(dataclasses.asdict(entry)))
+        assert result == {"filename": "test.txt", "size": 1024, "type": "file"}
+
+    def test_str_comparison(self):
+        entry = ArtifactEntry(filename="subdir", size=None, type=ArtifactType.DIR)
+        assert entry.type == "dir"
+
+
 class TestPublicAPI:
     def test_step_in_prow_all(self):
         import dredge.prow as module
 
         assert "Step" in module.__all__
+
+    def test_artifact_entry_in_prow_all(self):
+        import dredge.prow as module
+
+        assert "ArtifactEntry" in module.__all__
+        assert "ArtifactType" in module.__all__

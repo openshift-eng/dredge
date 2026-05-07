@@ -5,8 +5,9 @@ from pathlib import Path
 from ..fetcher import FetchError
 from . import _metadata
 from ._step import Step
+from ._types import ArtifactEntry, ArtifactType
 
-__all__ = ["Job", "JobImportError", "Step", "import_from_spyglass"]
+__all__ = ["ArtifactEntry", "ArtifactType", "Job", "JobImportError", "Step", "import_from_spyglass"]
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class Job:
 
         self._steps_data = json.loads((job_dir / "steps.json").read_text())
 
-    def step(self, name, inner_name=None):
+    def step(self, name: str, inner_name: str | None = None) -> Step:
         if name not in self._steps_data:
             raise KeyError(f"Step not found: {name}")
         step_info = self._steps_data[name]

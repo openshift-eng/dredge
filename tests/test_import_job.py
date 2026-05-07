@@ -96,4 +96,11 @@ class TestImportJob:
     def test_public_api_is_restricted(self):
         import dredge.prow as module
 
-        assert set(module.__all__) == {"import_from_spyglass", "Job", "JobImportError", "Step"}
+        assert set(module.__all__) == {
+            "ArtifactEntry",
+            "ArtifactType",
+            "import_from_spyglass",
+            "Job",
+            "JobImportError",
+            "Step",
+        }
