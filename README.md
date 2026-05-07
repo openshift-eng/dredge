@@ -2,7 +2,7 @@
 
 A CLI tool for downloading artifacts from OpenShift [Prow](https://docs.prow.k8s.io/) CI jobs.
 
-Dredge automates the process of navigating Prow's web UI and GCS buckets to retrieve build artifacts. It downloads JUnit results, build logs for failed steps, must-gather diagnostics, and HyperShift hosted cluster dumps, then organizes them locally for analysis.
+Dredge automates the process of navigating Prow's web UI and GCS buckets to retrieve build artifacts. It downloads build logs, step metadata, and must-gather diagnostics, then organizes them locally for analysis.
 
 ## Installation
 
@@ -36,58 +36,74 @@ uv sync
 
 ## Usage
 
-### Download builds from a job history page
-
-```sh
-dredge history -d ./artifacts <job-history-url> <count>
-```
-
-Fetches the most recent `<count>` builds from a Prow job history page. Filter by result with `--failure` or `--success`.
-
-```sh
-dredge history -d ./artifacts \
-  "https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/e2e-aws-ovn" \
-  10 --failure
-```
-
-### Download specific builds by URL
-
-```sh
-dredge urls -d ./artifacts <spyglass-url> [<spyglass-url> ...]
-```
-
-Process one or more Prow Spyglass build URLs directly.
+All discovery commands (`import`, `pr`, `history`) accept `-d DIR` to set the output directory.
 
 ### Download failed jobs from a GitHub PR
 
 ```sh
-dredge pr -d ./artifacts <github-pr-url>
+dredge -d .dredge pr <github-pr-url>
 ```
 
 Discovers failed Prow jobs from the PR's commit statuses and downloads their artifacts. Uses the `gh` CLI for authentication if available, falling back to unauthenticated requests.
 
-### Download must-gather from an existing build
+### Download specific builds by URL
 
 ```sh
-dredge must-gather ./artifacts/<build-id> [step-name]
+dredge -d .dredge import <spyglass-url> [<spyglass-url> ...]
 ```
 
-Downloads OpenShift must-gather diagnostics from a previously downloaded build. The step name is auto-detected if omitted.
+Import one or more Prow Spyglass build URLs directly.
 
-### Download HyperShift cluster dumps
+### Download builds from a job history page
 
 ```sh
-dredge hypershift-dump ./artifacts/<build-id> [step-name]
+dredge -d .dredge history <job-history-url> <count>
 ```
 
-Downloads `hostedcluster.tar` archives from HyperShift test steps.
-
-### Automatic artifact downloads
-
-Pass `--auto` (or `--auto-must-gather` / `--auto-hypershift` individually) to any discovery command to automatically download must-gather and HyperShift dumps alongside the standard artifacts:
+Fetches the most recent `<count>` builds from a Prow job history page. Only failed jobs are downloaded by default; use `--no-failed` to include all results.
 
 ```sh
-dredge history -d ./artifacts <url> 5 --failure --auto
+dredge -d .dredge history \
+  "https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/e2e-aws-ovn" \
+  10
+```
+
+### Download must-gather
+
+Download must-gather diagnostics from a build already in the dredge directory:
+
+```sh
+dredge -d .dredge fetch-must-gather <build-id>
+```
+
+The step name is auto-detected. To specify it explicitly:
+
+```sh
+dredge -d .dredge fetch-must-gather -s <step-name> <build-id>
+```
+
+To automatically download must-gather during import, add `--auto-must-gather` to any discovery command:
+
+```sh
+dredge -d .dredge pr --auto-must-gather <github-pr-url>
+```
+
+### Step-level commands
+
+Inspect and download individual step artifacts from a build:
+
+```sh
+# List artifacts for a step
+dredge -d .dredge step-ls <build-id> <step-path>
+
+# Download the build log for a step
+dredge -d .dredge step-log <build-id> <step-path>
+
+# Download a specific artifact
+dredge -d .dredge step-get -p <artifact-path> <build-id> <step-path>
+
+# Extract a tar.gz artifact
+dredge -d .dredge step-extract <build-id> <step-path> <artifact-path>
 ```
 
 ## What gets downloaded
@@ -96,12 +112,11 @@ Each build is saved to `<output-dir>/<build-id>/` with:
 
 | File | Description |
 |------|-------------|
-| `build_info.json` | Build metadata: ID, timestamps, URLs, step hierarchy with pass/fail status |
-| `junit_operator.xml` | JUnit test results from ci-operator |
-| `ci-operator-step-graph.json` | Step graph with timing, dependencies, and status |
-| `build-logs/<step>/` | Build logs and JUnit XML for failed steps |
-| `must-gather/` | Extracted OpenShift cluster diagnostics (if requested) |
-| `hypershift-dumps/` | Extracted HyperShift hosted cluster dumps (if requested) |
+| `job.json` | Build metadata: ID, job name, Spyglass link, PR link, GCS path |
+| `steps.json` | Step hierarchy with pass/fail status and substeps |
+| `ci-operator-step-graph.json` | Raw step graph with timing, dependencies, and status |
+| `<parent-step>/<step>/build-log.txt` | Build log for a downloaded step |
+| `<parent-step>/<step>/artifacts/` | Artifacts for a downloaded step (e.g. must-gather) |
 
 ## Authentication
 
@@ -111,13 +126,13 @@ For Kerberos-authenticated decks, obtain a ticket first:
 
 ```sh
 kinit user@IPA.REDHAT.COM
-dredge urls -d ./artifacts <protected-url>
+dredge -d .dredge import <protected-url>
 ```
 
 To allow redirects to additional domains during authentication:
 
 ```sh
-dredge --trusted-redirect-domain .example.com urls -d ./artifacts <url>
+dredge --trusted-redirect-domain .example.com -d .dredge import <url>
 ```
 
 ## Claude Code plugin
@@ -126,7 +141,7 @@ Dredge includes a [Claude Code](https://claude.ai/code) plugin that teaches Clau
 
 ```
 /plugin marketplace add openshift-cloud-team/dredge
-/plugin install prow-job-download@dredge-plugins
+/plugin install dredge@dredge-plugins
 ```
 
 To update the plugin after the repo is updated:
@@ -135,7 +150,7 @@ To update the plugin after the repo is updated:
 /plugin marketplace update dredge-plugins
 ```
 
-Once installed, use `/prow-job-download:prow-job-download` in any project to download Prow job logs by providing a GitHub PR URL, Prow Spyglass URL, or job history URL.
+Once installed, use `/dredge:prow-artifacts` in any project to download Prow job logs by providing a GitHub PR URL, Prow Spyglass URL, or job history URL.
 
 ## Running without installing
 
