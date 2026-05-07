@@ -6,9 +6,9 @@
   "description": "Claude Code plugins for working with Prow CI using dredge",
   "plugins": [
     {
-      "name": "prow-job-download",
-      "source": "./plugins/prow-job-download",
-      "description": "Download and analyze Prow CI job logs using the dredge tool"
+      "name": "dredge",
+      "source": "./plugins/dredge",
+      "description": "Efficiently download Prow CI artifacts using the dredge tool"
     }
   ]
 }
