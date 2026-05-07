@@ -152,8 +152,7 @@ class TestStepExtract:
         )
 
         buf = io.BytesIO()
-        with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-            with tarfile.open(fileobj=gz, mode="w") as tar:
+        with gzip.GzipFile(fileobj=buf, mode="wb") as gz, tarfile.open(fileobj=gz, mode="w") as tar:
                 info = tarfile.TarInfo(name="data.txt")
                 content = b"hello"
                 info.size = len(content)

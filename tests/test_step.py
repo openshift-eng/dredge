@@ -142,7 +142,9 @@ class TestListArtifacts:
         entries = step.list_artifacts(path="junit")
 
         assert len(entries) == 1
-        assert entries[0] == ArtifactEntry(filename="results.xml", size=None, type=ArtifactType.FILE)
+        assert entries[0] == ArtifactEntry(
+            filename="results.xml", size=None, type=ArtifactType.FILE
+        )
 
 
 class TestGetArtifact:
@@ -172,8 +174,7 @@ class TestGetArtifact:
 
 def _make_tar_gz(files: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
-    with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with gzip.GzipFile(fileobj=buf, mode="wb") as gz, tarfile.open(fileobj=gz, mode="w") as tar:
             for name, content in files.items():
                 info = tarfile.TarInfo(name=name)
                 info.size = len(content)
@@ -246,7 +247,8 @@ class TestGetArtifactRecursive:
 
         assert result == tmp_path / step.name / "artifacts" / "data"
         assert (tmp_path / step.name / "artifacts" / "data" / "a.txt").read_bytes() == b"file-a"
-        assert (tmp_path / step.name / "artifacts" / "data" / "sub" / "b.txt").read_bytes() == b"file-b"
+        data_dir = tmp_path / step.name / "artifacts" / "data"
+        assert (data_dir / "sub" / "b.txt").read_bytes() == b"file-b"
 
     @responses.activate
     def test_recursive_idempotent(self, tmp_path):
