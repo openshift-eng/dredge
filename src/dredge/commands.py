@@ -38,8 +38,9 @@ Each subdirectory is named by build ID and may contain:
   - `gcsweb_base`: Base URL for gcsweb artifact access
 
 - `steps.json` - Recursive step hierarchy keyed by step name:
-  - Each entry has `success: bool`
+  - Each entry has `status` (passed/failed/skipped) and `type` (build/test)
   - Multi-stage tests also have `substeps: {{...}}` with the same structure
+  - Build steps represent image builds; their logs are the top-level ci-operator log
 
 - `ci-operator-step-graph.json` - Raw step graph from ci-operator
 
@@ -168,7 +169,7 @@ def _process_build(
         if count:
             logger.info(f"Build {job.build_id}: downloaded {count} artifact(s) for failed steps")
     else:
-        logger.info(f"Build {job.build_id}: no failed multi-stage steps found")
+        logger.info(f"Build {job.build_id}: no failed steps found")
 
     if auto_must_gather:
         try:

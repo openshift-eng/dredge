@@ -3,9 +3,11 @@ import io
 import tarfile
 from pathlib import Path
 
+import pytest
 import responses
 
 from dredge.prow import ArtifactEntry, ArtifactType, Step
+from dredge.prow._step import BuildStepArtifactError
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -13,7 +15,7 @@ GCS_PATH = "test-bucket/pr-logs/pull/org_repo/123/job-name/9999"
 GCSWEB_BASE = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/"
 
 
-def _make_step(tmp_path, *, name="openshift-e2e-test", test_name=None, success=False):
+def _make_step(tmp_path, *, name="openshift-e2e-test", test_name=None, success=False, step_type=None):
     return Step(
         name=name,
         success=success,
@@ -21,6 +23,7 @@ def _make_step(tmp_path, *, name="openshift-e2e-test", test_name=None, success=F
         gcsweb_base=GCSWEB_BASE,
         job_dir=tmp_path,
         test_name=test_name,
+        step_type=step_type,
     )
 
 
@@ -79,6 +82,51 @@ class TestGetLog:
 
         step.get_log()
         assert len(responses.calls) == 1
+
+
+class TestBuildStepGetLog:
+    @responses.activate
+    def test_downloads_top_level_prow_log(self, tmp_path):
+        step = _make_step(tmp_path, name="azure-cloud-controller-manager", step_type="build")
+        url = f"{GCSWEB_BASE}{GCS_PATH}/build-log.txt"
+        responses.get(url, body=b"ci-operator full output")
+
+        result = step.get_log()
+
+        assert result.read_text() == "ci-operator full output"
+        assert result.is_symlink()
+        assert result.resolve() == (tmp_path / "build-log.txt").resolve()
+
+    @responses.activate
+    def test_deduplicates_across_build_steps(self, tmp_path):
+        url = f"{GCSWEB_BASE}{GCS_PATH}/build-log.txt"
+        responses.get(url, body=b"ci-operator full output")
+
+        step1 = _make_step(tmp_path, name="bin", step_type="build")
+        step2 = _make_step(tmp_path, name="azure-ccm", step_type="build")
+
+        step1.get_log()
+        step2.get_log()
+
+        assert len(responses.calls) == 1
+        assert (tmp_path / "bin" / "build-log.txt").read_text() == "ci-operator full output"
+        assert (tmp_path / "azure-ccm" / "build-log.txt").read_text() == "ci-operator full output"
+
+
+class TestBuildStepArtifacts:
+    def test_list_artifacts_returns_empty(self, tmp_path):
+        step = _make_step(tmp_path, name="bin", step_type="build")
+        assert step.list_artifacts() == []
+
+    def test_get_artifact_raises(self, tmp_path):
+        step = _make_step(tmp_path, name="bin", step_type="build")
+        with pytest.raises(BuildStepArtifactError, match="no artifact directory"):
+            step.get_artifact("some-file.txt")
+
+    def test_extract_artifact_raises(self, tmp_path):
+        step = _make_step(tmp_path, name="bin", step_type="build")
+        with pytest.raises(BuildStepArtifactError, match="no artifact directory"):
+            step.extract_artifact("some.tar")
 
 
 class TestListArtifacts:

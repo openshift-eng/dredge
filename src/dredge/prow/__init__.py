@@ -1,6 +1,7 @@
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from ..fetcher import FetchError
 from . import _metadata
@@ -32,6 +33,11 @@ class Job:
 
         self._steps_data = json.loads((job_dir / "steps.json").read_text())
 
+    def _read_status(self, info: dict[str, Any]) -> bool:
+        if "status" in info:
+            return info["status"] == "passed"
+        return info["success"]
+
     def step(self, name: str, inner_name: str | None = None) -> Step:
         if name not in self._steps_data:
             raise KeyError(f"Step not found: {name}")
@@ -40,10 +46,11 @@ class Job:
         if inner_name is None:
             return Step(
                 name=name,
-                success=step_info["success"],
+                success=self._read_status(step_info),
                 gcs_path=self.gcs_path,
                 gcsweb_base=self.gcsweb_base,
                 job_dir=self.job_dir,
+                step_type=step_info.get("type"),
             )
 
         substeps = step_info.get("substeps", {})
@@ -51,7 +58,7 @@ class Job:
             raise KeyError(f"Inner step not found: {name}/{inner_name}")
         return Step(
             name=inner_name,
-            success=substeps[inner_name]["success"],
+            success=self._read_status(substeps[inner_name]),
             gcs_path=self.gcs_path,
             gcsweb_base=self.gcsweb_base,
             job_dir=self.job_dir,
@@ -62,10 +69,11 @@ class Job:
         return [
             Step(
                 name=name,
-                success=info["success"],
+                success=self._read_status(info),
                 gcs_path=self.gcs_path,
                 gcsweb_base=self.gcsweb_base,
                 job_dir=self.job_dir,
+                step_type=info.get("type"),
             )
             for name, info in self._steps_data.items()
         ]
@@ -73,10 +81,16 @@ class Job:
     def failed_steps(self) -> list[Step]:
         result = []
         for name, info in self._steps_data.items():
+            is_failed = info.get("status") == "failed" if "status" in info else not info["success"]
             substeps = info.get("substeps", {})
             if substeps:
                 for inner_name, inner_info in substeps.items():
-                    if not inner_info["success"]:
+                    inner_failed = (
+                        inner_info.get("status") == "failed"
+                        if "status" in inner_info
+                        else not inner_info["success"]
+                    )
+                    if inner_failed:
                         result.append(
                             Step(
                                 name=inner_name,
@@ -87,7 +101,7 @@ class Job:
                                 test_name=name,
                             )
                         )
-            elif not info["success"]:
+            elif is_failed:
                 result.append(
                     Step(
                         name=name,
@@ -95,6 +109,7 @@ class Job:
                         gcs_path=self.gcs_path,
                         gcsweb_base=self.gcsweb_base,
                         job_dir=self.job_dir,
+                        step_type=info.get("type"),
                     )
                 )
         return result
@@ -117,17 +132,17 @@ def import_from_spyglass(spyglass_url: str, output_dir: str | Path) -> Job:
         step_graph = _metadata.fetch_step_graph(gcsweb_base, gcs_path)
         job_spec = _metadata.fetch_job_spec(gcsweb_base, gcs_path)
         steps = _metadata.extract_steps(step_graph)
-        if not any(s["inner_steps"] for s in steps):
+        test_steps = [s for s in steps if s["type"] == "test" and s["status"] != "skipped"]
+        if test_steps and not any(s["inner_steps"] for s in test_steps):
             junit_steps = _metadata.fetch_junit_steps(gcsweb_base, gcs_path)
             _metadata.apply_inner_steps(steps, junit_steps)
 
         # ci-operator container tests always upload artifacts to "test/"
         # regardless of the test's configured name.
         # See: openshift/ci-tools pkg/steps/pod.go TestStep() calling PodStep("test", ...)
-        if not any(s["inner_steps"] for s in steps):
-            for s in steps:
-                if s["name"] != "src":
-                    s["name"] = "test"
+        if test_steps and not any(s["inner_steps"] for s in test_steps):
+            for s in test_steps:
+                s["name"] = "test"
     except (FetchError, ValueError) as e:
         raise JobImportError(str(e)) from e
 
@@ -135,7 +150,7 @@ def import_from_spyglass(spyglass_url: str, output_dir: str | Path) -> Job:
 
     steps_hierarchy = {}
     for step in steps:
-        entry = {"success": step["success"]}
+        entry: dict[str, Any] = {"status": step["status"], "type": step["type"]}
         if step.get("inner_steps"):
             entry["substeps"] = step["inner_steps"]
         steps_hierarchy[step["name"]] = entry

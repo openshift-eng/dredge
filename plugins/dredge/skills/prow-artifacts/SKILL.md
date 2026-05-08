@@ -63,27 +63,41 @@ dredge -d "$(pwd)/.dredge" pr --auto-must-gather <github_pr_url>
 Each build creates a directory `.dredge/<build_id>/` containing:
 
 - **`job.json`** — build metadata: spyglass link, build ID, job name, PR link, GCS path
-- **`steps.json`** — hierarchical step structure with success/failure status
+- **`steps.json`** — hierarchical step structure with status and type for each step
 
-**Always read `steps.json` first.** It shows every step that ran, whether it passed, and for multi-phase tests, the substeps nested under a parent step. Example structure:
+**Always read `steps.json` first.** It shows every step that ran, its status (`passed`, `failed`, or `skipped`), its type (`build` or `test`), and for multi-phase tests, the substeps nested under a parent step. Example structure:
 
 ```json
 {
-  "src": { "success": true },
-  "e2e-aws-capi-techpreview": {
-    "success": false,
+  "src": { "status": "passed", "type": "build" },
+  "azure-cloud-controller-manager": { "status": "failed", "type": "build" },
+  "e2e-azure-ovn-upgrade": {
+    "status": "skipped",
+    "type": "test",
     "substeps": {
-      "test": { "success": false },
-      "gather-must-gather": { "success": true }
+      "setup": { "status": "skipped" },
+      "test": { "status": "skipped" }
     }
   }
 }
 ```
 
+### Step types
+
+- **`build`** — image builds (e.g. `src`, `bin`, named images like `azure-cloud-controller-manager`). Build failures indicate compilation or Dockerfile errors. Build step logs are the top-level ci-operator log, not a per-step log. Build steps have no artifacts directory.
+- **`test`** — multi-stage tests and container tests. These have per-step logs and artifacts.
+
+### Step status
+
+- **`passed`** — step executed successfully
+- **`failed`** — step executed and failed
+- **`skipped`** — step never ran (a dependency failed before it could start)
+
 ### Step directories
 
 Each downloaded step has a directory at `.dredge/<build_id>/<parent_step>/<step_name>/` containing a `build-log.txt` with the direct output of that step.
 
+- **Build steps** (e.g. `src`, `bin`, named images): the log is a symlink to the top-level ci-operator log. Search for the step name in this log to find relevant build output. Build steps have no `artifacts/` directory.
 - **Test steps** (e.g. `test`): the log usually contains everything you need — test output, failure messages, stack traces.
 - **Artifact-gathering steps** (e.g. `gather-must-gather`, `gather-extra`): the log is usually not interesting. The value is in the artifacts, located under `artifacts/` within the step directory.
 

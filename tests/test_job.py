@@ -23,13 +23,14 @@ def _write_job_files(job_dir, steps=None):
 
     if steps is None:
         steps = {
-            "src": {"success": True},
+            "src": {"status": "passed", "type": "build"},
             "e2e-aws": {
-                "success": False,
+                "status": "failed",
+                "type": "test",
                 "substeps": {
-                    "setup": {"success": True},
-                    "openshift-e2e-test": {"success": False},
-                    "teardown": {"success": True},
+                    "setup": {"status": "passed"},
+                    "openshift-e2e-test": {"status": "failed"},
+                    "teardown": {"status": "passed"},
                 },
             },
         }
@@ -87,6 +88,14 @@ class TestJobStep:
         assert step.test_name == "e2e-aws"
         assert step.step_path == "e2e-aws/openshift-e2e-test"
 
+    def test_step_type_propagated(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        assert job.step("src").step_type == "build"
+        assert job.step("e2e-aws").step_type == "test"
+
     def test_unknown_raises_key_error(self, tmp_path):
         job_dir = tmp_path / "9999"
         _write_job_files(job_dir)
@@ -138,12 +147,13 @@ class TestFailedSteps:
         _write_job_files(
             job_dir,
             steps={
-                "src": {"success": True},
+                "src": {"status": "passed", "type": "build"},
                 "e2e-aws": {
-                    "success": True,
+                    "status": "passed",
+                    "type": "test",
                     "substeps": {
-                        "setup": {"success": True},
-                        "openshift-e2e-test": {"success": True},
+                        "setup": {"status": "passed"},
+                        "openshift-e2e-test": {"status": "passed"},
                     },
                 },
             },
@@ -157,7 +167,7 @@ class TestFailedSteps:
         _write_job_files(
             job_dir,
             steps={
-                "test": {"success": False},
+                "test": {"status": "failed", "type": "test"},
             },
         )
         job = Job(job_dir)
@@ -169,3 +179,35 @@ class TestFailedSteps:
         assert failed[0].test_name is None
         assert failed[0].success is False
         assert failed[0].step_path == "test"
+
+    def test_returns_failed_build_steps(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(
+            job_dir,
+            steps={
+                "src": {"status": "passed", "type": "build"},
+                "azure-cloud-controller-manager": {"status": "failed", "type": "build"},
+                "e2e-test": {"status": "skipped", "type": "test"},
+            },
+        )
+        job = Job(job_dir)
+
+        failed = job.failed_steps()
+
+        assert len(failed) == 1
+        assert failed[0].name == "azure-cloud-controller-manager"
+        assert failed[0].step_type == "build"
+        assert failed[0].success is False
+
+    def test_skipped_steps_not_in_failed(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(
+            job_dir,
+            steps={
+                "src": {"status": "passed", "type": "build"},
+                "e2e-test": {"status": "skipped", "type": "test"},
+            },
+        )
+        job = Job(job_dir)
+
+        assert job.failed_steps() == []

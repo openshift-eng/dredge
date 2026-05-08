@@ -36,10 +36,11 @@ def _create_job(tmp_path: Path) -> tuple[Path, str]:
     }
     steps_data = {
         "e2e-aws": {
-            "success": False,
+            "status": "failed",
+            "type": "test",
             "substeps": {
-                "openshift-e2e-test": {"success": False},
-                "gather-must-gather": {"success": True},
+                "openshift-e2e-test": {"status": "failed"},
+                "gather-must-gather": {"status": "passed"},
             },
         },
     }

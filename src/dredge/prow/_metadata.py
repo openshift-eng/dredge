@@ -56,6 +56,26 @@ def fetch_job_spec(gcsweb_base: str, gcs_path: str) -> dict[str, str | None]:
     }
 
 
+def _classify_step(step_data: dict[str, Any]) -> str:
+    manifests = step_data.get("manifests") or []
+    if any(m.get("kind") == "Build" for m in manifests):
+        return "build"
+    if step_data.get("substeps"):
+        return "test"
+    desc = step_data.get("description", "")
+    if desc.startswith(("Build image ", "Store build results ", "Clone the correct source")):
+        return "build"
+    if desc.startswith(("Run multi-stage test ", "Run test ")):
+        return "test"
+    return "infrastructure"
+
+
+def _step_status(step_data: dict[str, Any]) -> str:
+    if step_data.get("started_at") is None:
+        return "skipped"
+    return "failed" if step_data.get("failed") else "passed"
+
+
 def extract_steps(step_graph: Any) -> list[dict[str, Any]]:
     steps = []
     for s in step_graph:
@@ -67,11 +87,12 @@ def extract_steps(step_graph: Any) -> list[dict[str, Any]]:
         for sub in s.get("substeps", []):
             sub_name = sub.get("name", "")
             stripped = sub_name[len(prefix) :] if sub_name.startswith(prefix) else sub_name
-            inner[stripped] = {"success": not sub.get("failed", False)}
+            inner[stripped] = {"status": _step_status(sub)}
         steps.append(
             {
                 "name": name,
-                "success": not s.get("failed", False),
+                "status": _step_status(s),
+                "type": _classify_step(s),
                 "inner_steps": inner,
             }
         )
@@ -96,7 +117,7 @@ def fetch_junit_steps(gcsweb_base: str, gcs_path: str) -> dict[str, dict[str, ob
         prefix = test_name + "-"
         inner_step = full_step[len(prefix) :] if full_step.startswith(prefix) else full_step
         failed = tc.find("failure") is not None
-        steps.setdefault(test_name, {})[inner_step] = {"success": not failed}
+        steps.setdefault(test_name, {})[inner_step] = {"status": "failed" if failed else "passed"}
 
     return steps
 

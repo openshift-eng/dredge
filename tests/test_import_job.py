@@ -58,10 +58,12 @@ class TestImportJob:
 
         steps = json.loads((job.job_dir / "steps.json").read_text())
         assert "[input:root]" not in steps
-        assert steps["src"] == {"success": True}
-        assert steps["breaking-changes"]["success"] is False
-        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
-        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
+        assert steps["src"]["status"] == "passed"
+        assert steps["src"]["type"] == "build"
+        assert steps["breaking-changes"]["status"] == "failed"
+        assert steps["breaking-changes"]["type"] == "test"
+        assert steps["breaking-changes"]["substeps"]["setup"]["status"] == "passed"
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["status"] == "failed"
 
     @responses.activate
     def test_idempotent_skips_refetch(self, tmp_path):
@@ -104,8 +106,8 @@ class TestImportJob:
         job = import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         steps = json.loads((job.job_dir / "steps.json").read_text())
-        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
-        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
+        assert steps["breaking-changes"]["substeps"]["setup"]["status"] == "passed"
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["status"] == "failed"
         fetched_urls = [c.request.url for c in responses.calls]
         assert not any("junit_operator.xml" in u for u in fetched_urls)
 
@@ -131,8 +133,8 @@ class TestImportJob:
         job = import_from_spyglass(SPYGLASS_URL, tmp_path)
 
         steps = json.loads((job.job_dir / "steps.json").read_text())
-        assert steps["breaking-changes"]["substeps"]["setup"]["success"] is True
-        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["success"] is False
+        assert steps["breaking-changes"]["substeps"]["setup"]["status"] == "passed"
+        assert steps["breaking-changes"]["substeps"]["breaking-changes"]["status"] == "failed"
 
     @responses.activate
     def test_container_test_step_renamed_to_test(self, tmp_path):
@@ -143,8 +145,20 @@ class TestImportJob:
         )
         step_graph = [
             {"name": "[input:root]"},
-            {"name": "src"},
-            {"name": "unit", "failed": True},
+            {
+                "name": "src",
+                "description": "Clone the correct source code into an image and tag it as src",
+                "started_at": "2025-01-15T10:00:00Z",
+                "finished_at": "2025-01-15T10:05:00Z",
+                "manifests": [{"kind": "Build", "metadata": {"name": "src-amd64"}}],
+            },
+            {
+                "name": "unit",
+                "description": "Run test unit",
+                "failed": True,
+                "started_at": "2025-01-15T10:05:00Z",
+                "finished_at": "2025-01-15T10:06:00Z",
+            },
         ]
         responses.get(
             f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
@@ -160,8 +174,106 @@ class TestImportJob:
         steps = json.loads((job.job_dir / "steps.json").read_text())
         assert "unit" not in steps
         assert "test" in steps
-        assert steps["test"]["success"] is False
-        assert steps["src"]["success"] is True
+        assert steps["test"]["status"] == "failed"
+        assert steps["src"]["status"] == "passed"
+
+    @responses.activate
+    def test_skipped_steps_have_status_skipped(self, tmp_path):
+        """Steps that never ran (null started_at) get status=skipped."""
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+            body=(FIXTURES / "prowjob.json").read_bytes(),
+        )
+        step_graph = [
+            {"name": "[input:root]"},
+            {
+                "name": "src",
+                "description": "Clone the correct source code into an image and tag it as src",
+                "started_at": "2025-01-15T10:00:00Z",
+                "finished_at": "2025-01-15T10:05:00Z",
+                "manifests": [{"kind": "Build", "metadata": {"name": "src-amd64"}}],
+            },
+            {
+                "name": "bin",
+                "description": "Store build results into a layer on top of src and save as bin",
+                "failed": True,
+                "started_at": "2025-01-15T10:05:00Z",
+                "finished_at": "2025-01-15T10:06:00Z",
+                "manifests": [{"kind": "Build", "metadata": {"name": "bin-amd64"}}],
+            },
+            {
+                "name": "rpms",
+                "description": "Store build results into a layer on top of bin and save as rpms",
+            },
+            {
+                "name": "e2e-test",
+                "description": "Run multi-stage test e2e-test",
+            },
+        ]
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            json=step_graph,
+        )
+
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        steps = json.loads((job.job_dir / "steps.json").read_text())
+        assert steps["rpms"]["status"] == "skipped"
+        assert steps["rpms"]["type"] == "build"
+        assert steps["e2e-test"]["status"] == "skipped"
+        assert steps["e2e-test"]["type"] == "test"
+        assert steps["bin"]["status"] == "failed"
+        assert steps["bin"]["type"] == "build"
+
+    @responses.activate
+    def test_build_steps_have_type_build_and_are_not_renamed(self, tmp_path):
+        """Image build failures must appear with their real name and type=build."""
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob.json",
+            body=(FIXTURES / "prowjob.json").read_bytes(),
+        )
+        step_graph = [
+            {"name": "[input:root]"},
+            {
+                "name": "src",
+                "description": "Clone the correct source code into an image and tag it as src",
+                "started_at": "2025-01-15T10:00:00Z",
+                "finished_at": "2025-01-15T10:05:00Z",
+                "manifests": [{"kind": "Build", "metadata": {"name": "src-amd64"}}],
+            },
+            {
+                "name": "azure-cloud-controller-manager",
+                "description": "Build image azure-cloud-controller-manager from the repository",
+                "failed": True,
+                "started_at": "2025-01-15T10:05:00Z",
+                "finished_at": "2025-01-15T10:07:00Z",
+                "manifests": [
+                    {
+                        "kind": "Build",
+                        "metadata": {"name": "azure-cloud-controller-manager-amd64"},
+                    }
+                ],
+            },
+            {
+                "name": "e2e-azure-ovn-upgrade",
+                "description": "Run multi-stage test e2e-azure-ovn-upgrade",
+            },
+        ]
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            json=step_graph,
+        )
+
+        job = import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        steps = json.loads((job.job_dir / "steps.json").read_text())
+        assert steps["src"]["type"] == "build"
+        assert steps["src"]["status"] == "passed"
+        assert steps["azure-cloud-controller-manager"]["type"] == "build"
+        assert steps["azure-cloud-controller-manager"]["status"] == "failed"
+        assert "azure-cloud-controller-manager" in steps
 
     def test_public_api_is_restricted(self):
         import dredge.prow as module

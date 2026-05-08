@@ -9,14 +9,17 @@
   },
   {
     "name": "src",
+    "description": "Clone the correct source code into an image and tag it as src",
     "failed": false,
     "started_at": "2025-01-15T10:00:00Z",
     "finished_at": "2025-01-15T10:05:00Z",
     "duration": 300000000000,
-    "dependencies": ["[input:root]"]
+    "dependencies": ["[input:root]"],
+    "manifests": [{"kind": "Build", "metadata": {"name": "src-amd64"}}]
   },
   {
     "name": "breaking-changes",
+    "description": "Run multi-stage test breaking-changes",
     "failed": true,
     "started_at": "2025-01-15T10:05:00Z",
     "finished_at": "2025-01-15T10:10:00Z",
