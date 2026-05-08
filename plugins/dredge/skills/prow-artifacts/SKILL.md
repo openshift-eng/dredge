@@ -1,6 +1,6 @@
 ---
 name: prow-artifacts
-description: Download Prow CI job artifacts for analysis. Use when user asks to examine failing CI jobs, provides Prow URLs, mentions a PR's test failures, or asks about prow/CI logs.
+description: Download Prow CI job artifacts for analysis. Understands Prow artifact structure, so is more efficient than manual fetching. Use when user provides a prow URL, asks about CI job results (pass or fail), mentions a PR's test results (pass or fail), or wants to examine CI logs.
 ---
 
 # Dredge
