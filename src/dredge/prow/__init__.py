@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..fetcher import FetchError
-from . import _metadata
+from . import _gcsweb, _metadata
 from ._step import Step
 from ._types import ArtifactEntry, ArtifactType
 
@@ -77,6 +77,35 @@ class Job:
             )
             for name, info in self._steps_data.items()
         ]
+
+    def get_root_junits(self) -> list[Path]:
+        """Download JUnit XML files from the job root (not inside any step).
+
+        These files are produced by ci-operator itself (e.g. junit_operator.xml
+        recording step-level pass/fail) and by Prow (prowjob_junit.xml recording
+        overall job completion). They live at the GCS root and under the
+        artifacts/ prefix, outside any step directory.
+        """
+        downloaded: list[Path] = []
+        # Scan both the job root and the artifacts/ prefix for junit XML files.
+        prefixes = [
+            (f"{self.gcsweb_base}{self.gcs_path}/", self.gcs_path),
+            (f"{self.gcsweb_base}{self.gcs_path}/artifacts/", f"{self.gcs_path}/artifacts"),
+        ]
+        for url, gcs_prefix in prefixes:
+            entries = _gcsweb.list_dir(url)
+            for entry in entries:
+                if (
+                    entry.type == ArtifactType.FILE
+                    and entry.filename.endswith(".xml")
+                    and "junit" in entry.filename.lower()
+                ):
+                    dest = self.job_dir / entry.filename
+                    if not dest.exists():
+                        file_url = f"{self.gcsweb_base}{gcs_prefix}/{entry.filename}"
+                        _gcsweb.download(file_url, dest)
+                    downloaded.append(dest)
+        return downloaded
 
     def failed_steps(self) -> list[Step]:
         result = []

@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import responses
 
 from dredge.prow import Job, Step
 
@@ -127,6 +128,119 @@ class TestJobSteps:
         for s in steps:
             assert isinstance(s, Step)
             assert s.test_name is None
+
+
+class TestGetRootJunits:
+    @responses.activate
+    def test_downloads_from_both_prefixes(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        root_url = f"{GCSWEB_BASE}{GCS_PATH}/"
+        root_gcs_prefix = f"/gcs/{GCS_PATH}"
+        root_html = (
+            f'<html><ul>'
+            f'<li><a href="{root_gcs_prefix}/prowjob_junit.xml">prowjob_junit.xml</a></li>'
+            f'<li><a href="{root_gcs_prefix}/artifacts/">artifacts/</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(root_url, body=root_html.encode())
+
+        artifacts_url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/"
+        art_gcs_prefix = f"/gcs/{GCS_PATH}/artifacts"
+        art_html = (
+            f'<html><ul>'
+            f'<li><a href="{art_gcs_prefix}/junit_operator.xml">'
+            f'junit_operator.xml</a></li>'
+            f'<li><a href="{art_gcs_prefix}/ci-operator-step-graph.json">'
+            f'ci-operator-step-graph.json</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(artifacts_url, body=art_html.encode())
+
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/prowjob_junit.xml",
+            body=b"<xml>prowjob</xml>",
+        )
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/junit_operator.xml",
+            body=b"<xml>operator</xml>",
+        )
+
+        result = job.get_root_junits()
+
+        assert len(result) == 2
+        filenames = {p.name for p in result}
+        assert filenames == {"prowjob_junit.xml", "junit_operator.xml"}
+        assert (job_dir / "prowjob_junit.xml").read_text() == "<xml>prowjob</xml>"
+        assert (job_dir / "junit_operator.xml").read_text() == "<xml>operator</xml>"
+
+    @responses.activate
+    def test_skips_non_junit_xml(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        root_url = f"{GCSWEB_BASE}{GCS_PATH}/"
+        root_gcs_prefix = f"/gcs/{GCS_PATH}"
+        root_html = (
+            f'<html><ul>'
+            f'<li><a href="{root_gcs_prefix}/prowjob.json">prowjob.json</a></li>'
+            f'<li><a href="{root_gcs_prefix}/started.json">started.json</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(root_url, body=root_html.encode())
+
+        artifacts_url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/"
+        art_gcs_prefix = f"/gcs/{GCS_PATH}/artifacts"
+        art_html = (
+            f'<html><ul>'
+            f'<li><a href="{art_gcs_prefix}/ci-operator-step-graph.json">'
+            f'ci-operator-step-graph.json</a></li>'
+            f'</ul></html>'
+        )
+        responses.get(artifacts_url, body=art_html.encode())
+
+        result = job.get_root_junits()
+
+        assert result == []
+
+    @responses.activate
+    def test_idempotent(self, tmp_path):
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        root_url = f"{GCSWEB_BASE}{GCS_PATH}/"
+        root_gcs_prefix = f"/gcs/{GCS_PATH}"
+        root_html = (
+            f'<html><ul>'
+            f'<li><a href="{root_gcs_prefix}/prowjob_junit.xml">prowjob_junit.xml</a></li>'
+            f'</ul></html>'
+        )
+        artifacts_url = f"{GCSWEB_BASE}{GCS_PATH}/artifacts/"
+        art_html = '<html><ul></ul></html>'
+
+        responses.get(root_url, body=root_html.encode())
+        responses.get(artifacts_url, body=art_html.encode())
+        responses.get(f"{GCSWEB_BASE}{GCS_PATH}/prowjob_junit.xml", body=b"<xml/>")
+
+        def _download_calls():
+            return [
+                c for c in responses.calls
+                if "prowjob_junit.xml" in c.request.url
+                and not c.request.url.endswith("/")
+            ]
+
+        job.get_root_junits()
+        assert len(_download_calls()) == 1
+
+        # Second call — re-lists but does not re-download
+        responses.get(root_url, body=root_html.encode())
+        responses.get(artifacts_url, body=art_html.encode())
+        job.get_root_junits()
+        assert len(_download_calls()) == 1
 
 
 class TestFailedSteps:

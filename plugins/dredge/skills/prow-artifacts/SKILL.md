@@ -138,8 +138,29 @@ If must-gather was not downloaded during import, fetch it explicitly:
 dredge -d "$(pwd)/.dredge" fetch-must-gather <build_id>
 ```
 
+## JUnit test results
+
+Root-level JUnit XML files (`junit_operator.xml`, `prowjob_junit.xml`) are automatically downloaded during import. Step-level JUnit files are downloaded for failing steps.
+
+### Blocking, informing, and flaky
+
+Prow classifies test results into three categories. **Blocking failures are the ones that cause the job to fail** — always start a failure analysis here.
+
+- **Blocking** — Tests with `<property name="lifecycle" value="blocking"/>` or no lifecycle property. If any blocking test fails, the job fails. These are the most important in a failure analysis.
+- **Informing** — Tests with `<property name="lifecycle" value="informing"/>`. These do **not** cause the job to fail even if they fail. They provide signal about features in development or known issues.
+- **Flaky** — When a test name appears more than once within a single JUnit XML file (one entry with `<failure>`, one without), Spyglass counts it as flaky rather than failed. This is common in `e2e-monitor-tests` XML files.
+
+### Key JUnit files
+
+- **`junit_e2e__*.xml`** — Individual e2e test results (pass/fail for each `[sig-*]` test). This is the primary file for identifying which e2e tests failed.
+- **`e2e-monitor-tests__*.xml`** — Monitor and invariant test results. These catch cluster-level problems like pathologically repeating events, alert firing, and disruption. **Failures use a different format than standard e2e tests** — they appear as `<testcase>` entries with `<failure>` elements, not in build-log grep output.
+- **`junit_operator.xml`** — ci-operator's record of step-level pass/fail. Redundant with `steps.json` but included for completeness.
+- **`junit_e2e_analysis__*.xml`** — Post-test cluster health checks produced by `gather-extra`: machine state, node readiness, operator conditions. Only interesting if they fail.
+- **`junit_symptoms.xml`** — Symptom detectors produced by `gather-extra`: panic detection, segfaults, quota exhaustion. Only interesting if they fail.
+
 ## Known substeps
 
 | Substep | Type | Description | Guide |
 |---|---|---|---|
 | `gather-must-gather` | Artifact collection | OpenShift cluster diagnostic snapshot: node state, resource dumps, etcd health, operator logs, networking diagnostics | [gather-must-gather](references/gather-must-gather.md) |
+| `gather-extra` | Artifact collection | Post-test cluster analysis: produces `junit_e2e_analysis` and `junit_symptoms` XML files with cluster health checks |

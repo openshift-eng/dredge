@@ -44,6 +44,9 @@ Each subdirectory is named by build ID and may contain:
 
 - `ci-operator-step-graph.json` - Raw step graph from ci-operator
 
+- `junit_operator.xml` - Step-level pass/fail as JUnit XML (auto-downloaded)
+- `prowjob_junit.xml` - Overall job completion as JUnit XML (auto-downloaded)
+
 - `{{test_name}}/{{inner_step}}/` - Artifacts for failed steps, mirroring the GCS layout
   - `build-log.txt` - Complete untruncated build log
   - `artifacts/` - Step-produced artifacts
@@ -162,6 +165,15 @@ def _process_build(
     except JobImportError as e:
         logger.warning(f"Failed to import job: {e}")
         return
+
+    try:
+        root_junits = job.get_root_junits()
+        if root_junits:
+            logger.info(
+                f"Build {job.build_id}: downloaded {len(root_junits)} root junit(s)"
+            )
+    except FetchError as e:
+        logger.warning(f"Build {job.build_id}: failed to fetch root junits: {e}")
 
     failed = job.failed_steps()
     if failed:
