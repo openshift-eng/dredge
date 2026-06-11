@@ -67,6 +67,8 @@ Each build creates a directory `.dredge/<build_id>/` containing:
 
 **Always read `steps.json` first.** It shows every step that ran, its status (`passed`, `failed`, or `skipped`), its type (`build` or `test`), and for multi-phase tests, the substeps nested under a parent step. Example structure:
 
+> **Note:** `dredge pr` only downloads artifacts from **failed** steps. If you need artifacts from passed steps (e.g., test logs when a validation step failed), use the step-specific commands documented below.
+
 ```json
 {
   "src": { "status": "passed", "type": "build" },
@@ -100,6 +102,33 @@ Each downloaded step has a directory at `.dredge/<build_id>/<parent_step>/<step_
 - **Build steps** (e.g. `src`, `bin`, named images): the log is a symlink to the top-level ci-operator log. Search for the step name in this log to find relevant build output. Build steps have no `artifacts/` directory.
 - **Test steps** (e.g. `test`): the log usually contains everything you need — test output, failure messages, stack traces.
 - **Artifact-gathering steps** (e.g. `gather-must-gather`, `gather-extra`): the log is usually not interesting. The value is in the artifacts, located under `artifacts/` within the step directory.
+
+## Downloading artifacts from specific steps
+
+After importing, you can download artifacts from ANY step (passed or failed):
+
+```bash
+# List available artifacts for a step
+dredge -d "$(pwd)/.dredge" step-ls <build_id> <step_path>
+
+# Download build log for a step
+dredge -d "$(pwd)/.dredge" step-log <build_id> <step_path>
+
+# Download a specific artifact
+dredge -d "$(pwd)/.dredge" step-get <build_id> <step_path> -p <artifact_path>
+
+# Download an entire directory recursively
+dredge -d "$(pwd)/.dredge" step-get <build_id> <step_path> -p <artifact_dir> -r
+```
+
+Example: Download test logs from a passed test step:
+```bash
+# List what's available
+dredge -d "$(pwd)/.dredge" step-ls 2056305481017724928 regression-clusterinfra-azure-ipi-mapi/openshift-extended-test
+
+# Get the test log
+dredge -d "$(pwd)/.dredge" step-get 2056305481017724928 regression-clusterinfra-azure-ipi-mapi/openshift-extended-test -p artifacts/extended.log
+```
 
 ### Downloading must-gather separately
 
