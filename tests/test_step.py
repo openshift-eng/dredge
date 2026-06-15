@@ -15,7 +15,9 @@ GCS_PATH = "test-bucket/pr-logs/pull/org_repo/123/job-name/9999"
 GCSWEB_BASE = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/"
 
 
-def _make_step(tmp_path, *, name="openshift-e2e-test", test_name=None, success=False, step_type=None):
+def _make_step(
+    tmp_path, *, name="openshift-e2e-test", test_name=None, success=False, step_type=None
+):
     return Step(
         name=name,
         success=success,

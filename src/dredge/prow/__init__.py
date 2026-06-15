@@ -35,8 +35,8 @@ class Job:
 
     def _read_status(self, info: dict[str, Any]) -> bool:
         if "status" in info:
-            return info["status"] == "passed"
-        return info["success"]
+            return bool(info["status"] == "passed")
+        return bool(info["success"])
 
     def step(self, name: str, inner_name: str | None = None) -> Step:
         if name not in self._steps_data:
