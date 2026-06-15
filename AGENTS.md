@@ -178,15 +178,6 @@ uv run dredge fetch-must-gather -d ./artifacts <build_id>
 uv run dredge fetch-must-gather -d ./artifacts <build_id> -s e2e-aws
 ```
 
-**must-gather** - Download must-gather from an existing build directory path:
-```bash
-# Auto-detect which step has the must-gather
-uv run dredge must-gather ./artifacts/<build_id>
-
-# Specify the step name explicitly
-uv run dredge must-gather ./artifacts/<build_id> e2e-aws
-```
-
 ### Global Options
 - `--trusted-redirect-domain`: Additional trusted domain for auth redirects (may be repeated; prefix with `.` for suffix match)
 
@@ -229,7 +220,7 @@ make check                  # lint + typecheck + test
 `gather-must-gather` substep via `job.step(name, "gather-must-gather")`, then
 extracts via `step.extract_artifact("must-gather.tar")`. Must-gather is not
 downloaded by default; use `--auto-must-gather` during discovery or the
-`fetch-must-gather` / `must-gather` subcommand on an existing build directory.
+`fetch-must-gather` subcommand on an existing build directory.
 
 ### Pagination
 `discovery._prow_history._get_next_page_url()` extracts the "Older Runs" link. The buildId query
@@ -247,7 +238,7 @@ Individual artifact downloads are also idempotent:
 - `step.get_log()`: Skipped if `build-log.txt` already exists on disk
 - `step.get_artifact(path)`: Skipped if the artifact file already exists on disk
 - `step.extract_artifact(path)`: Skipped if extracted directory exists and is non-empty
-- `must-gather/`: Skipped if directory exists (both --auto-must-gather and must-gather command)
+- `must-gather/`: Skipped if directory exists (both --auto-must-gather and fetch-must-gather command)
 
 To force re-import, delete `job.json` or `steps.json` from the build directory.
 
@@ -324,9 +315,6 @@ uv run dredge step-ls -d ./artifacts <build_id> e2e-aws/openshift-e2e-test
 uv run dredge step-log -d ./artifacts <build_id> e2e-aws/openshift-e2e-test
 uv run dredge step-get -d ./artifacts <build_id> e2e-aws/openshift-e2e-test -p junit/test.xml
 uv run dredge step-extract -d ./artifacts <build_id> e2e-aws/gather-must-gather must-gather.tar
-
-# Must-gather on existing build directory
-uv run dredge must-gather ./artifacts/<build_id>
 
 # Authenticated Prow deck (requires kinit + gssapi)
 uv run dredge import -d ./artifacts \

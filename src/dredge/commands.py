@@ -276,15 +276,5 @@ def cmd_fetch_must_gather(
     print(result)
 
 
-def cmd_must_gather(build_dir: Path, step_name: str | None) -> None:
-    if not build_dir.is_dir():
-        logger.error(f"Build directory does not exist: {build_dir}")
-        sys.exit(1)
 
-    job = _load_job(build_dir)
-    try:
-        _download_must_gather(job, step_name)
-    except ArtifactError as e:
-        logger.error(str(e))
-        sys.exit(1)
 

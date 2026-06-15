@@ -128,15 +128,6 @@ def parse_args() -> argparse.Namespace:
         "-s", "--step-name", default=None, help="Step name (auto-detected if omitted)"
     )
 
-    mg_parser = subparsers.add_parser(
-        "must-gather",
-        help="Download must-gather from an existing build directory",
-    )
-    mg_parser.add_argument("build_dir", type=Path, help="Path to an existing build directory")
-    mg_parser.add_argument(
-        "step_name", nargs="?", default=None, help="Step name (guessed if omitted)"
-    )
-
     junit_filter_parser = subparsers.add_parser(
         "junit-filter",
         help="Filter JUnit XML by status, lifecycle, and flakiness",
@@ -217,9 +208,6 @@ def main() -> None:
     elif args.command == "fetch-must-gather":
         dredge_dir = _require_dredge_dir(args)
         commands.cmd_fetch_must_gather(dredge_dir, args.build_id, args.step_name)
-
-    elif args.command == "must-gather":
-        commands.cmd_must_gather(args.build_dir, args.step_name)
 
     elif args.command == "junit-filter":
         xml_bytes = (
