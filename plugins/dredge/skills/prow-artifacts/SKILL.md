@@ -148,7 +148,9 @@ Prow classifies test results into three categories. **Blocking failures are the 
 
 - **Blocking** — Tests with `<property name="lifecycle" value="blocking"/>` or no lifecycle property. If any blocking test fails, the job fails. These are the most important in a failure analysis.
 - **Informing** — Tests with `<property name="lifecycle" value="informing"/>`. These do **not** cause the job to fail even if they fail. They provide signal about features in development or known issues.
-- **Flaky** — When a test name appears more than once within a single JUnit XML file (one entry with `<failure>`, one without), Spyglass counts it as flaky rather than failed. This is common in `e2e-monitor-tests` XML files.
+- **Flaky** — When a test name appears more than once within a single JUnit XML file (one entry with `<failure>`, one without), Spyglass counts it as flaky rather than failed. Flaky tests do not cause job failure even if they have blocking lifecycle. This is common in `e2e-monitor-tests` XML files but can also occur in `junit_e2e` files.
+
+Lifecycle properties only exist in `junit_e2e__*.xml` files. Other JUnit files (`e2e-monitor-tests`, `junit_operator.xml`, etc.) have no lifecycle properties — all their tests are implicitly blocking.
 
 ### Key JUnit files
 
@@ -157,6 +159,35 @@ Prow classifies test results into three categories. **Blocking failures are the 
 - **`junit_operator.xml`** — ci-operator's record of step-level pass/fail. Redundant with `steps.json` but included for completeness.
 - **`junit_e2e_analysis__*.xml`** — Post-test cluster health checks produced by `gather-extra`: machine state, node readiness, operator conditions. Only interesting if they fail.
 - **`junit_symptoms.xml`** — Symptom detectors produced by `gather-extra`: panic detection, segfaults, quota exhaustion. Only interesting if they fail.
+
+### Filtering JUnit XML
+
+Use `dredge junit-filter` to reduce JUnit XML to only the tests you care about. **The output is structurally identical JUnit XML** — same schema, same hierarchy — with excluded testcases removed and suite counters updated. This is the most efficient way to read only the failures that matter.
+
+```bash
+# Most common: get only the blocking, non-flaky failures that caused the job to fail
+dredge junit-filter --status=failed --lifecycle=blocking --no-flaky <junit_file>
+
+# Get only informing test failures
+dredge junit-filter --status=failed --lifecycle=informing <junit_file>
+
+# Remove flaky tests from any JUnit file
+dredge junit-filter --no-flaky <junit_file>
+
+# Read from stdin
+cat <junit_file> | dredge junit-filter --status=failed -
+```
+
+Filters:
+- `--status=failed|passed|skipped` — filter by test result
+- `--lifecycle=blocking|informing` — filter by lifecycle property (tests without a lifecycle property are treated as blocking)
+- `--no-flaky` — exclude flaky tests (same test name with both pass and fail entries in the same suite). Flaky tests do not cause job failure.
+
+**When analysing a test failure, always start with:**
+```bash
+dredge junit-filter --status=failed --lifecycle=blocking --no-flaky <junit_file>
+```
+This gives you exactly the failures that caused the job to fail — no informing noise, no flaky noise.
 
 ## Known substeps
 

@@ -106,6 +106,30 @@ dredge -d .dredge step-get -p <artifact-path> <build-id> <step-path>
 dredge -d .dredge step-extract <build-id> <step-path> <artifact-path>
 ```
 
+### Filter JUnit XML
+
+Filter JUnit XML files to extract only the test results you care about:
+
+```sh
+# Get only the blocking, non-flaky failures that caused the job to fail
+dredge junit-filter --status=failed --lifecycle=blocking --no-flaky <junit-file>
+
+# Get only informing test failures
+dredge junit-filter --status=failed --lifecycle=informing <junit-file>
+
+# Remove flaky tests from results
+dredge junit-filter --no-flaky <junit-file>
+
+# Read from stdin
+cat junit.xml | dredge junit-filter --status=failed -
+```
+
+The output is structurally identical JUnit XML with excluded testcases removed and suite counters updated.
+
+- `--status` — Filter by test result: `failed`, `passed`, or `skipped`
+- `--lifecycle` — Filter by [lifecycle property](https://docs.google.com/document/d/1CI5hAB3bLSqpwl0k23xD9NZbj0PP2oUj0DkRvX7Os4k): `blocking` (default when absent) or `informing`
+- `--no-flaky` — Exclude flaky tests (same test name with both pass and fail entries). Flaky tests do not cause job failure.
+
 ## What gets downloaded
 
 Each build is saved to `<output-dir>/<build-id>/` with:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import commands
 from .fetcher import _auth
+from .junit import filter_junit
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +137,33 @@ def parse_args() -> argparse.Namespace:
         "step_name", nargs="?", default=None, help="Step name (guessed if omitted)"
     )
 
+    junit_filter_parser = subparsers.add_parser(
+        "junit-filter",
+        help="Filter JUnit XML by status, lifecycle, and flakiness",
+    )
+    junit_filter_parser.add_argument(
+        "file",
+        type=Path,
+        help="JUnit XML file to filter (use - for stdin)",
+    )
+    junit_filter_parser.add_argument(
+        "--status",
+        choices=["failed", "passed", "skipped"],
+        default=None,
+        help="Keep only testcases with this status",
+    )
+    junit_filter_parser.add_argument(
+        "--lifecycle",
+        choices=["blocking", "informing"],
+        default=None,
+        help="Keep only testcases with this lifecycle (default: all)",
+    )
+    junit_filter_parser.add_argument(
+        "--no-flaky",
+        action="store_true",
+        help="Exclude flaky tests (tests with both passing and failing entries)",
+    )
+
     return parser.parse_args()
 
 
@@ -192,3 +220,15 @@ def main() -> None:
 
     elif args.command == "must-gather":
         commands.cmd_must_gather(args.build_dir, args.step_name)
+
+    elif args.command == "junit-filter":
+        xml_bytes = (
+            sys.stdin.buffer.read() if str(args.file) == "-" else args.file.read_bytes()
+        )
+        result = filter_junit(
+            xml_bytes,
+            status=args.status,
+            lifecycle=args.lifecycle,
+            no_flaky=args.no_flaky,
+        )
+        sys.stdout.buffer.write(result)

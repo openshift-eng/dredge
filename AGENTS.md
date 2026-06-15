@@ -24,6 +24,9 @@ src/dredge/
     _step.py                - Step class: get_log(), list_artifacts(), get_artifact(), extract_artifact()
     _gcsweb.py              - gcsweb download and directory listing helpers
     _types.py               - ArtifactEntry, ArtifactType
+  junit/                    - JUnit XML analysis package
+    __init__.py             - Public API: filter_junit()
+    _filter.py              - Filter testcases by status, lifecycle, and flakiness
   discovery/                - Build discovery package
     __init__.py             - Public API: from_prow_history(), from_github_pr(), JobFilter
     _prow_history.py        - Prow job history page scraping, pagination, build filtering
@@ -139,6 +142,30 @@ uv run dredge step-get -d ./artifacts <build_id> <step_name> -p <dir_path> -r
 ```bash
 uv run dredge step-extract -d ./artifacts <build_id> <step_name> <tar_path>
 ```
+
+### JUnit Subcommands
+
+**junit-filter** - Filter JUnit XML by status, lifecycle, and flakiness:
+```bash
+# Get only blocking failures (most common use case for failure analysis)
+uv run dredge junit-filter --status=failed --lifecycle=blocking --no-flaky input.xml
+
+# Get only informing test failures
+uv run dredge junit-filter --status=failed --lifecycle=informing input.xml
+
+# Remove flaky tests from results
+uv run dredge junit-filter --no-flaky input.xml
+
+# Read from stdin
+cat input.xml | uv run dredge junit-filter --status=failed -
+```
+
+The output is structurally identical JUnit XML with excluded testcases removed
+and testsuite counters updated. Output goes to stdout.
+
+- `--status`: Filter by test status (`failed`, `passed`, `skipped`)
+- `--lifecycle`: Filter by lifecycle property (`blocking`, `informing`). Tests without a lifecycle property are treated as blocking.
+- `--no-flaky`: Exclude flaky tests. A test is flaky when the same (classname, name) pair has both passing and failing entries in the same testsuite. Flaky tests do not cause job failure.
 
 ### Must-gather Subcommands
 
