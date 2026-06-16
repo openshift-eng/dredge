@@ -7,6 +7,16 @@ description: Download Prow CI job artifacts for analysis. Understands Prow artif
 
 Download Prow CI job artifacts with `dredge` and make them available for analysis.
 
+## Invoking dredge
+
+Run dredge via `uvx` — no installation required. All `dredge` commands in this document use the short form `dredge`. Prefix every invocation with the following `uvx --from` argument:
+
+```
+uvx --from 'git+https://github.com/openshift-eng/dredge@main'
+```
+
+For example, where this document says `dredge pr <url>`, run `uvx --from '...' dredge pr <url>`.
+
 ## Quick start
 
 1. Identify the mode from user input
@@ -122,6 +132,7 @@ dredge -d "$(pwd)/.dredge" step-get <build_id> <step_path> -p <artifact_dir> -r
 ```
 
 Example: Download test logs from a passed test step:
+
 ```bash
 # List what's available
 dredge -d "$(pwd)/.dredge" step-ls 2056305481017724928 regression-clusterinfra-azure-ipi-mapi/openshift-extended-test
@@ -179,14 +190,17 @@ cat <junit_file> | dredge junit-filter --status=failed -
 ```
 
 Filters:
+
 - `--status=failed|passed|skipped` — filter by test result
 - `--lifecycle=blocking|informing` — filter by lifecycle property (tests without a lifecycle property are treated as blocking)
 - `--no-flaky` — exclude flaky tests (same test name with both pass and fail entries in the same suite). Flaky tests do not cause job failure.
 
 **When analysing a test failure, always start with:**
+
 ```bash
 dredge junit-filter --status=failed --lifecycle=blocking --no-flaky <junit_file>
 ```
+
 This gives you exactly the failures that caused the job to fail — no informing noise, no flaky noise.
 
 ## Known substeps
