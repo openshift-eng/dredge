@@ -4,6 +4,25 @@ A CLI tool for downloading artifacts from OpenShift [Prow](https://docs.prow.k8s
 
 Dredge automates the process of navigating Prow's web UI and GCS buckets to retrieve build artifacts. It downloads build logs, step metadata, and must-gather diagnostics, then organizes them locally for analysis.
 
+## Claude Code plugin
+
+Dredge includes a [Claude Code](https://claude.ai/code) plugin that teaches Claude how to download and analyze Prow CI job logs. The plugin does not require dredge to be installed first — it runs dredge automatically via `uvx`.
+
+Install it from the dredge marketplace:
+
+```
+/plugin marketplace add openshift-eng/dredge
+/plugin install dredge@dredge-plugins
+```
+
+To update the plugin after the repo is updated:
+
+```
+/plugin marketplace update dredge-plugins
+```
+
+Once installed, use `/dredge:prow-artifacts` in any project to download Prow job logs by providing a GitHub PR URL, Prow Spyglass URL, or job history URL.
+
 ## Installation
 
 Requires Python 3.10+. Install with [uv](https://docs.astral.sh/uv/).
@@ -153,25 +172,8 @@ To allow redirects to additional domains during authentication:
 dredge --trusted-redirect-domain .example.com -d .dredge import <url>
 ```
 
-## Claude Code plugin
-
-Dredge includes a [Claude Code](https://claude.ai/code) plugin that teaches Claude how to download and analyze Prow CI job logs. Install it from the dredge marketplace:
-
-```
-/plugin marketplace add openshift-eng/dredge
-/plugin install dredge@dredge-plugins
-```
-
-To update the plugin after the repo is updated:
-
-```
-/plugin marketplace update dredge-plugins
-```
-
-Once installed, use `/dredge:prow-artifacts` in any project to download Prow job logs by providing a GitHub PR URL, Prow Spyglass URL, or job history URL.
-
 ## Running without installing
 
 ```sh
-uv run dredge <command> [options]
+uvx --from 'git+https://github.com/openshift-eng/dredge' dredge <command> [options]
 ```
