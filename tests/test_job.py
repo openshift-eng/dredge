@@ -113,6 +113,26 @@ class TestJobStep:
         with pytest.raises(KeyError, match="e2e-aws/no-such-inner"):
             job.step("e2e-aws", "no-such-inner")
 
+    def test_inner_step_name_without_parent_suggests_full_path(self, tmp_path):
+        """When user provides just the inner step name, suggest the full path."""
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        with pytest.raises(KeyError, match=r"Did you mean.*e2e-aws/openshift-e2e-test"):
+            job.step("openshift-e2e-test")
+
+    def test_inner_step_suggests_available_substeps(self, tmp_path):
+        """When inner step is not found, list available substeps."""
+        job_dir = tmp_path / "9999"
+        _write_job_files(job_dir)
+        job = Job(job_dir)
+
+        with pytest.raises(
+            KeyError, match=r"Available substeps in e2e-aws.*openshift-e2e-test, setup, teardown"
+        ):
+            job.step("e2e-aws", "no-such-inner")
+
 
 class TestJobSteps:
     def test_returns_all_top_level(self, tmp_path):

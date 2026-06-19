@@ -40,7 +40,26 @@ class Job:
 
     def step(self, name: str, inner_name: str | None = None) -> Step:
         if name not in self._steps_data:
-            raise KeyError(f"Step not found: {name}")
+            # Check if this might be an inner step name provided without the parent
+            possible_matches = []
+            for step_name, step_info in self._steps_data.items():
+                substeps = step_info.get("substeps", {})
+                if name in substeps:
+                    possible_matches.append(f"{step_name}/{name}")
+
+            if possible_matches:
+                matches_str = ", ".join(possible_matches)
+                raise KeyError(
+                    f"Step not found: {name}\n"
+                    f"Did you mean one of these? {matches_str}\n"
+                    f"Use the full step path (e.g., parent/inner-step)"
+                )
+
+            available = ", ".join(sorted(self._steps_data.keys()))
+            raise KeyError(
+                f"Step not found: {name}\n"
+                f"Available top-level steps: {available}"
+            )
         step_info = self._steps_data[name]
 
         if inner_name is None:
@@ -55,7 +74,11 @@ class Job:
 
         substeps = step_info.get("substeps", {})
         if inner_name not in substeps:
-            raise KeyError(f"Inner step not found: {name}/{inner_name}")
+            available = ", ".join(sorted(substeps.keys()))
+            raise KeyError(
+                f"Inner step not found: {name}/{inner_name}\n"
+                f"Available substeps in {name}: {available}"
+            )
         return Step(
             name=inner_name,
             success=self._read_status(substeps[inner_name]),
