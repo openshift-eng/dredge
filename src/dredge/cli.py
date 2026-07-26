@@ -59,8 +59,8 @@ def parse_args() -> argparse.Namespace:
     history_parser.add_argument(
         "--failed",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Only download failed jobs (default: True)",
+        default=False,
+        help="Only download failed jobs",
     )
     history_parser.add_argument(
         "--auto-must-gather",

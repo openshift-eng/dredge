@@ -42,10 +42,10 @@ Then proceed with the resolved URL using `dredge pr`.
 
 ## Determine mode
 
-| User input | Command |
-|---|---|
-| GitHub PR URL (`github.com/org/repo/pull/N`) | `dredge pr` |
-| Prow Spyglass URL(s) containing `/view/gs/` | `dredge import` |
+| User input                                      | Command          |
+| ----------------------------------------------- | ---------------- |
+| GitHub PR URL (`github.com/org/repo/pull/N`)    | `dredge pr`      |
+| Prow Spyglass URL(s) containing `/view/gs/`     | `dredge import`  |
 | Prow job-history URL containing `/job-history/` | `dredge history` |
 
 ## Working directory
@@ -61,12 +61,17 @@ dredge -d "$(pwd)/.dredge" pr <github_pr_url>
 # Specific Spyglass URLs
 dredge -d "$(pwd)/.dredge" import <url> [<url> ...]
 
-# Job history — most recent N failures
+# Job history — most recent N jobs
 dredge -d "$(pwd)/.dredge" history <job_history_url> <count>
+
+# Job history — most recent N failures only
+dredge -d "$(pwd)/.dredge" history --failed <job_history_url> <count>
 
 # To also download must-gather artifacts during import, add --auto-must-gather
 dredge -d "$(pwd)/.dredge" pr --auto-must-gather <github_pr_url>
 ```
+
+Use `--failed` when the user is specifically asking about failures. Omit it when the user asks for general job history or provides a history URL without mentioning failures.
 
 ## After import
 
@@ -205,7 +210,7 @@ This gives you exactly the failures that caused the job to fail — no informing
 
 ## Known substeps
 
-| Substep | Type | Description | Guide |
-|---|---|---|---|
+| Substep              | Type                | Description                                                                                                           | Guide                                                  |
+| -------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
 | `gather-must-gather` | Artifact collection | OpenShift cluster diagnostic snapshot: node state, resource dumps, etcd health, operator logs, networking diagnostics | [gather-must-gather](references/gather-must-gather.md) |
-| `gather-extra` | Artifact collection | Post-test cluster analysis: produces `junit_e2e_analysis` and `junit_symptoms` XML files with cluster health checks |
+| `gather-extra`       | Artifact collection | Post-test cluster analysis: produces `junit_e2e_analysis` and `junit_symptoms` XML files with cluster health checks   |
