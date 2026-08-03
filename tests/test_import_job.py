@@ -92,6 +92,25 @@ class TestImportJob:
         assert not (tmp_path / BUILD_ID / "job.json").exists()
 
     @responses.activate
+    def test_step_graph_missing_gcsweb_html_fallback_raises_job_import_error(self, tmp_path):
+        # gcsweb has no concept of a missing object: requesting a path that
+        # doesn't exist as a file returns 200 with an HTML directory listing
+        # instead of a 404. This happens for jobs that never ran ci-operator
+        # (e.g. a plain periodic pod job with no artifacts/ directory).
+        responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
+        responses.get(
+            f"{GCSWEB_BASE}{GCS_PATH}/artifacts/ci-operator-step-graph.json",
+            status=200,
+            body="<!doctype html>\n<html><body>empty directory listing</body></html>",
+            content_type="text/html; charset=utf-8",
+        )
+
+        with pytest.raises(JobImportError, match="does not appear to use ci-operator"):
+            import_from_spyglass(SPYGLASS_URL, tmp_path)
+
+        assert not (tmp_path / BUILD_ID / "job.json").exists()
+
+    @responses.activate
     def test_substeps_from_step_graph_skips_junit_fetch(self, tmp_path):
         responses.get(SPYGLASS_URL, body=(FIXTURES / "spyglass_page.html").read_bytes())
         responses.get(

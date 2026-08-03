@@ -39,7 +39,23 @@ def discover_gcsweb_base(prow_base_url: str, spyglass_link: str) -> str:
 def fetch_step_graph(gcsweb_base: str, gcs_path: str) -> Any:
     url = f"{gcsweb_base}{gcs_path}/artifacts/ci-operator-step-graph.json"
     with fetch_url(url) as body:
-        return json.loads(body.read().decode())
+        raw = body.read().decode()
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as e:
+        # gcsweb has no notion of a missing object: requesting a path that
+        # doesn't exist as a file falls back to treating it as a (possibly
+        # empty) directory prefix and returns 200 with an HTML listing
+        # instead of a 404. That happens here when the job never ran
+        # ci-operator at all (e.g. a plain periodic pod job), so there is
+        # no step graph to import.
+        if "<html>" in raw.lower():
+            raise ValueError(
+                "No ci-operator-step-graph.json found at "
+                f"{url} — this job does not appear to use ci-operator "
+                "(dredge only supports ci-operator/multi-stage jobs)"
+            ) from e
+        raise
 
 
 def fetch_job_spec(gcsweb_base: str, gcs_path: str) -> dict[str, str | None]:
