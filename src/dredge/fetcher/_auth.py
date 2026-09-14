@@ -121,13 +121,21 @@ def _extract_form_redirect(response: requests.Response) -> _Redirect | None:
 
     inputs = re.findall(r"<input[^>]+>", html, re.I)
     form_data = {}
+    submit_added = False
     for inp in inputs:
-        if not re.search(r"type=[\"']hidden[\"']", inp, re.I):
+        type_m = re.search(r"type=[\"']([^\"']+)[\"']", inp, re.I)
+        input_type = type_m.group(1).lower() if type_m else "text"
+        if input_type in ("checkbox", "radio") and not re.search(r"\bchecked\b", inp, re.I):
+            continue
+        if input_type == "submit" and submit_added:
+            continue
+        if input_type not in ("hidden", "checkbox", "radio", "submit"):
             continue
         name_m = re.search(r"name=[\"']([^\"']+)[\"']", inp, re.I)
         val_m = re.search(r"value=[\"']([^\"']*)[\"']", inp, re.I)
         if name_m:
             form_data[name_m.group(1)] = html_unescape(val_m.group(1)) if val_m else ""
+            submit_added = submit_added or input_type == "submit"
 
     if method == "GET":
         if form_data:

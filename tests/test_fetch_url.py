@@ -6,13 +6,38 @@ from unittest.mock import MagicMock, patch
 import pytest
 import responses
 import urllib3
+from requests import Response
 
 from dredge.fetcher import FetchError, NotFoundError, fetch_url
+from dredge.fetcher._auth import _extract_form_redirect
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
 class TestFetchUrl:
+    def test_oauth_approval_form_includes_checked_permissions_and_submit_action(self):
+        response = Response()
+        response.url = "https://oauth-openshift.openshiftapps.com/oauth/authorize/approve"
+        response._content = b"""
+            <form method="POST" action="/oauth/authorize/approve">
+              <input type="hidden" name="then" value="../authorize?client_id=test&amp;x=1">
+              <input type="checkbox" name="scope" value="user:info" checked>
+              <input type="checkbox" name="scope:admin" value="yes">
+              <input type="submit" name="approve" value="Allow selected permissions">
+              <input type="submit" name="deny" value="Cancel">
+            </form>
+        """
+
+        assert _extract_form_redirect(response) == (
+            "POST",
+            "https://oauth-openshift.openshiftapps.com/oauth/authorize/approve",
+            {
+                "then": "../authorize?client_id=test&x=1",
+                "scope": "user:info",
+                "approve": "Allow selected permissions",
+            },
+        )
+
     @responses.activate
     def test_returns_readable_bytes_stream(self):
         responses.get("http://example.com/page", body=b"hello world")
