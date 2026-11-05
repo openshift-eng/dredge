@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from . import commands
+from .discovery import GitHubTransport
 from .fetcher import _auth
 from .junit import filter_junit
 
@@ -71,6 +72,14 @@ def parse_args() -> argparse.Namespace:
     pr_parser = subparsers.add_parser(
         "pr",
         help="Download failed prow jobs from a GitHub PR",
+        epilog="Example: dredge -d .dredge pr --github-transport gh "
+        "https://github.com/owner/repo/pull/123",
+    )
+    pr_parser.add_argument(
+        "--github-transport",
+        choices=[transport.value for transport in GitHubTransport],
+        help="GitHub API transport (overrides DREDGE_GITHUB_TRANSPORT; default: http). "
+        "gh uses gh api without extracting credentials; failures never switch transports",
     )
     pr_parser.add_argument(
         "pr_url", help="GitHub PR URL (e.g., https://github.com/owner/repo/pull/123)"
@@ -155,7 +164,16 @@ def parse_args() -> argparse.Namespace:
         help="Exclude flaky tests (tests with both passing and failing entries)",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.command == "pr":
+        selection = args.github_transport
+        if selection is None:
+            selection = os.environ.get("DREDGE_GITHUB_TRANSPORT", "http")
+        try:
+            args.github_transport = GitHubTransport(selection)
+        except ValueError:
+            pr_parser.error("DREDGE_GITHUB_TRANSPORT must be one of: http, gh")
+    return args
 
 
 def _require_dredge_dir(args: argparse.Namespace) -> Path:
@@ -185,7 +203,12 @@ def main() -> None:
 
     elif args.command == "pr":
         dredge_dir = _require_dredge_dir(args)
-        commands.cmd_pr(dredge_dir, args.pr_url, args.auto_must_gather)
+        commands.cmd_pr(
+            dredge_dir,
+            args.pr_url,
+            args.auto_must_gather,
+            github_transport=args.github_transport,
+        )
 
     elif args.command == "step-ls":
         dredge_dir = _require_dredge_dir(args)

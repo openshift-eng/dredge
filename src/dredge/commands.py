@@ -4,9 +4,13 @@ import tarfile
 from pathlib import Path
 from urllib.parse import urlparse
 
-import requests
-
-from .discovery import JobFilter, from_github_pr, from_prow_history
+from .discovery import (
+    GitHubDiscoveryError,
+    GitHubTransport,
+    JobFilter,
+    from_github_pr,
+    from_prow_history,
+)
 from .fetcher import FetchError
 from .prow import Job, JobImportError, Step, import_from_spyglass
 
@@ -187,16 +191,15 @@ def cmd_pr(
     dredge_dir: Path,
     pr_url: str,
     auto_must_gather: bool,
+    *,
+    github_transport: GitHubTransport = GitHubTransport.HTTP,
 ) -> None:
     logger.info(f"Fetching failed jobs for {pr_url}")
 
     try:
-        urls = from_github_pr(pr_url, job_filter=JobFilter.FAILED)
-    except ValueError as e:
+        urls = from_github_pr(pr_url, job_filter=JobFilter.FAILED, transport=github_transport)
+    except GitHubDiscoveryError as e:
         logger.error(str(e))
-        sys.exit(1)
-    except requests.RequestException as e:
-        logger.error(f"Failed to fetch PR info from GitHub API: {e}")
         sys.exit(1)
 
     if not urls:

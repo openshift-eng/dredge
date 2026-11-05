@@ -57,7 +57,52 @@ All discovery commands (`import`, `pr`, `history`) accept `-d DIR` to set the ou
 dredge -d .dredge pr <github-pr-url>
 ```
 
-Discovers failed Prow jobs from the PR's commit statuses and downloads their artifacts. Uses the `gh` CLI for authentication if available, falling back to unauthenticated requests.
+Discovers failed Prow jobs from the PR's commit statuses and downloads their artifacts.
+The default `http` transport uses direct GitHub HTTP requests. It reads a token with
+`gh auth token` when available and uses anonymous HTTP when token lookup fails.
+
+To route GitHub discovery through the installed `gh api`, select the `gh` transport:
+
+```sh
+dredge -d .dredge pr --github-transport gh <github-pr-url>
+
+# Set the default for PR commands in an agent workspace.
+export DREDGE_GITHUB_TRANSPORT=gh
+dredge -d .dredge pr <github-pr-url>
+```
+
+Selection precedence is `--github-transport {http,gh}`, then
+`DREDGE_GITHUB_TRANSPORT`, then `http`. Invalid selections fail before discovery.
+The flag belongs after `pr`; `-d` belongs before the subcommand.
+Other subcommands ignore the transport environment variable.
+
+The `gh` transport performs two explicit GETs on `github.com`, for the PR head and
+the head commit's combined statuses. Each subprocess has a 30-second timeout.
+It inherits the workspace environment, including patched gh routing, without
+extracting a token. Missing gh, denied requests, timeouts, and invalid responses
+fail with exit code 1. Dredge does not switch transports or retry anonymously after
+an API failure. Diagnostics omit raw response bodies and gh stderr. Safe request
+IDs from response headers are included when available.
+
+Both transports preserve status filtering, URL order, and duplicates. Discovery
+reads one combined-status page and does not query the Checks API. An empty list of
+matching jobs succeeds. Protected Prow artifact authentication remains separate.
+
+#### Pin Dredge in an agent workspace
+
+Pin the executed code as well as the installed skill. After the implementation is
+committed and available in the selected repository, set `DREDGE_SOURCE` to
+`git+https://github.com/openshift-eng/dredge.git@<reviewed-full-commit-sha>` and run:
+
+```sh
+DREDGE_GITHUB_TRANSPORT=gh uvx --from "$DREDGE_SOURCE" dredge \
+  -d "$PWD/.dredge" pr https://github.com/openshift/origin/pull/31858
+```
+
+The code revision must contain the transport implementation. Pin the plugin's
+skill content separately to a reviewed commit. A skill pin does not pin a command
+that fetches code from `@main`. Verify both revisions and environment inheritance
+in a fresh workspace with the pinned patched gh binary and gateway before rollout.
 
 ### Download specific builds by URL
 
